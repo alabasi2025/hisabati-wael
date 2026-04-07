@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+
+# Wrangler
+.wrangler/
+.dev.vars
+
+# Runtime data
+pids
+*.pid
+*.pid.lock
+
+# dotenv
+.env
+
+# PM2
+.pm2/
+pids/
+logs/
+*.log
+
+# Backups
+*.backup
+*.bak
+*.tar.gz
+*.zip
+
+# IDE
+.vscode/
+.idea/
