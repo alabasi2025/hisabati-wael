@@ -98,6 +98,146 @@ function timeAgo(dateStr) {
   return `منذ ${Math.floor(diff/86400)} يوم`;
 }
 
+// ===== Global Search =====
+let searchTimeout = null;
+let searchResultIndex = -1;
+
+function handleGlobalSearch(query) {
+  clearTimeout(searchTimeout);
+  if (!query || query.length < 2) {
+    hideSearchResults();
+    return;
+  }
+  searchTimeout = setTimeout(async () => {
+    const res = await apiFetch(`/search?q=${encodeURIComponent(query)}`);
+    if (res.success) {
+      renderSearchResults(res.data, query);
+      showSearchResults();
+    }
+  }, 300);
+}
+
+function showSearchResults() {
+  const q = document.getElementById('globalSearchInput')?.value;
+  if (q && q.length >= 2) {
+    document.getElementById('globalSearchResults')?.classList.remove('hidden');
+  }
+}
+
+function hideSearchResults() {
+  document.getElementById('globalSearchResults')?.classList.add('hidden');
+  searchResultIndex = -1;
+}
+
+function renderSearchResults(data, query) {
+  const container = document.getElementById('searchResultsContent');
+  if (!container) return;
+
+  const highlight = (text) => {
+    if (!text || !query) return text || '';
+    const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    return String(text).replace(regex, '<mark class="bg-yellow-500/30 text-yellow-300 rounded px-0.5">$1</mark>');
+  };
+
+  let html = '';
+  const typeIcons = { asset: 'fa-coins text-blue-400', liability: 'fa-hand-holding-usd text-red-400', equity: 'fa-balance-scale text-yellow-400', revenue: 'fa-chart-line text-green-400', expense: 'fa-receipt text-orange-400' };
+
+  // Accounts
+  if (data.accounts?.length > 0) {
+    html += `<div class="px-3 py-1.5 text-[10px] text-gray-500 uppercase font-bold tracking-wider">حسابات (${data.accounts.length})</div>`;
+    data.accounts.forEach(a => {
+      const icon = typeIcons[a.account_type] || 'fa-file text-gray-400';
+      html += `<button onclick="hideSearchResults();navigate('/accounts');setTimeout(()=>highlightAccountInTree('${a.code}'),300)" class="search-result-item w-full text-right px-3 py-2.5 hover:bg-dark-700/60 flex items-center gap-3 transition rounded-xl">
+        <i class="fas ${icon} w-5 text-center text-sm"></i>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm text-gray-200">${highlight(a.name_ar)}</div>
+          <div class="text-xs text-gray-500 font-mono">${highlight(a.code)}</div>
+        </div>
+        <span class="text-xs text-gray-600 font-mono">${formatNumber(a.current_balance)}</span>
+      </button>`;
+    });
+  }
+
+  // Journal
+  if (data.journal?.length > 0) {
+    html += `<div class="px-3 py-1.5 text-[10px] text-gray-500 uppercase font-bold tracking-wider border-t border-dark-700 mt-1 pt-2">قيود (${data.journal.length})</div>`;
+    data.journal.forEach(j => {
+      html += `<button onclick="hideSearchResults();navigate('/journal');setTimeout(()=>viewJournalEntry(${j.id}),300)" class="search-result-item w-full text-right px-3 py-2.5 hover:bg-dark-700/60 flex items-center gap-3 transition rounded-xl">
+        <i class="fas fa-book-open w-5 text-center text-sm text-purple-400"></i>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm text-gray-200">${highlight(j.description || 'قيد #' + j.entry_number)}</div>
+          <div class="text-xs text-gray-500">${j.entry_date} - <span class="badge ${j.status==='posted'?'badge-success':'badge-warning'} text-[9px]">${j.status==='posted'?'مرحّل':'مسودة'}</span></div>
+        </div>
+        <span class="text-xs text-gray-600 font-mono">${formatNumber(j.total_debit)}</span>
+      </button>`;
+    });
+  }
+
+  // Vouchers
+  if (data.vouchers?.length > 0) {
+    html += `<div class="px-3 py-1.5 text-[10px] text-gray-500 uppercase font-bold tracking-wider border-t border-dark-700 mt-1 pt-2">سندات (${data.vouchers.length})</div>`;
+    data.vouchers.forEach(v => {
+      const typeIcon = v.voucher_type === 'receipt' ? 'fa-hand-holding-usd text-green-400' : 'fa-money-bill-wave text-red-400';
+      html += `<button onclick="hideSearchResults();navigate('/vouchers/${v.voucher_type}');setTimeout(()=>viewVoucher(${v.id}),300)" class="search-result-item w-full text-right px-3 py-2.5 hover:bg-dark-700/60 flex items-center gap-3 transition rounded-xl">
+        <i class="fas ${typeIcon} w-5 text-center text-sm"></i>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm text-gray-200">${highlight(v.beneficiary || 'سند #' + v.voucher_number)}</div>
+          <div class="text-xs text-gray-500">${v.voucher_date}</div>
+        </div>
+        <span class="text-xs text-gray-600 font-mono">${formatNumber(v.amount)}</span>
+      </button>`;
+    });
+  }
+
+  if (!html) {
+    html = '<div class="p-6 text-center text-gray-500"><i class="fas fa-search text-3xl mb-3 block opacity-30"></i><p class="text-sm">لا توجد نتائج</p></div>';
+  }
+
+  container.innerHTML = html;
+}
+
+function handleSearchKeydown(e) {
+  const items = document.querySelectorAll('.search-result-item');
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    searchResultIndex = Math.min(searchResultIndex + 1, items.length - 1);
+    items.forEach((item, i) => item.classList.toggle('bg-dark-700/60', i === searchResultIndex));
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    searchResultIndex = Math.max(searchResultIndex - 1, 0);
+    items.forEach((item, i) => item.classList.toggle('bg-dark-700/60', i === searchResultIndex));
+  } else if (e.key === 'Enter' && searchResultIndex >= 0 && items[searchResultIndex]) {
+    items[searchResultIndex].click();
+  } else if (e.key === 'Escape') {
+    hideSearchResults();
+    document.getElementById('globalSearchInput').blur();
+  }
+}
+
+function highlightAccountInTree(code) {
+  // Expand tree and scroll to account
+  const nodes = document.querySelectorAll('.tree-node');
+  nodes.forEach(n => {
+    const nameData = n.dataset.name || '';
+    if (nameData.includes(code)) {
+      n.style.display = '';
+      // Expand parents
+      let parent = n.parentElement;
+      while (parent) {
+        if (parent.classList?.contains('tree-node')) parent.classList.remove('tree-closed');
+        parent = parent.parentElement;
+      }
+      // Highlight
+      const row = n.querySelector('.flex.items-center');
+      if (row) {
+        row.classList.add('ring-2', 'ring-primary-500', 'bg-primary-500/10');
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => row.classList.remove('ring-2', 'ring-primary-500', 'bg-primary-500/10'), 3000);
+      }
+    }
+  });
+}
+
 function toggleUserMenu() {
   document.getElementById('userMenu')?.classList.toggle('hidden');
 }
@@ -289,6 +429,9 @@ async function renderDashboard(el) {
       ${statCard('fa-book-open', 'القيود', d.postedEntries + '/' + d.totalEntries, d.draftEntries + ' مسودة', 'from-violet-600 to-purple-700')}
     </div>
 
+    <!-- KPI Indicators & Smart Alerts -->
+    ${buildKPISection(d)}
+
     <!-- Bank Balances + Quick Actions -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
       <!-- Bank Balances -->
@@ -465,7 +608,83 @@ function quickAction(icon, label, action, color) {
 }
 
 function emptyState(msg, icon) {
-  return `<div class="text-center py-8 text-gray-500"><i class="fas ${icon} text-3xl mb-3 block opacity-40"></i><p class="text-sm">${msg}</p></div>`;
+  return `<div class="text-center py-8 text-gray-500"><i class="fas ${icon} text-4xl mb-3 block opacity-30"></i><p class="text-sm">${msg}</p></div>`;
+}
+
+// ===== KPI & Smart Alerts Section =====
+function buildKPISection(d) {
+  const alerts = [];
+
+  // Smart alerts based on data
+  if (d.draftEntries > 0) {
+    alerts.push({ type: 'warning', icon: 'fa-exclamation-triangle', message: `يوجد ${d.draftEntries} قيد مسودة بحاجة لترحيل`, action: "navigate('/journal')", actionText: 'عرض القيود' });
+  }
+  if (d.cashBalance < 0) {
+    alerts.push({ type: 'error', icon: 'fa-times-circle', message: 'تحذير: رصيد الصندوق سالب!', action: "navigate('/reports/account-statement')", actionText: 'كشف حساب' });
+  }
+  if (d.totalReceipts > 0 && d.totalPayments > 0) {
+    const ratio = d.totalPayments / d.totalReceipts;
+    if (ratio > 0.9) {
+      alerts.push({ type: 'warning', icon: 'fa-balance-scale-right', message: `المصروفات تشكل ${(ratio * 100).toFixed(0)}% من الإيرادات`, action: "navigate('/reports/income')", actionText: 'قائمة الدخل' });
+    }
+  }
+
+  // KPI calculations
+  const netFlow = (d.totalReceipts || 0) - (d.totalPayments || 0);
+  const postingRate = d.totalEntries > 0 ? ((d.postedEntries / d.totalEntries) * 100).toFixed(0) : 100;
+  const avgEntry = d.totalEntries > 0 ? (d.totalReceipts + d.totalPayments) / d.totalEntries : 0;
+
+  let html = '';
+
+  // Alerts
+  if (alerts.length > 0) {
+    html += `<div class="mb-4 space-y-2">`;
+    alerts.forEach(a => {
+      const colors = { warning: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400', error: 'bg-red-500/10 border-red-500/30 text-red-400', info: 'bg-blue-500/10 border-blue-500/30 text-blue-400' };
+      html += `<div class="${colors[a.type]} border rounded-xl px-4 py-3 flex items-center justify-between text-sm">
+        <div class="flex items-center gap-3">
+          <i class="fas ${a.icon}"></i>
+          <span>${a.message}</span>
+        </div>
+        <button onclick="${a.action}" class="text-xs underline hover:no-underline">${a.actionText}</button>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // KPI Cards
+  html += `<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+    <div class="bg-dark-800 rounded-xl border border-dark-700 p-4">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-gray-500 text-xs">صافي التدفق النقدي</span>
+        <i class="fas ${netFlow >= 0 ? 'fa-arrow-trend-up text-green-400' : 'fa-arrow-trend-down text-red-400'}"></i>
+      </div>
+      <div class="text-xl font-bold ${netFlow >= 0 ? 'text-green-400' : 'text-red-400'}">${formatNumber(netFlow)}</div>
+      <div class="mt-2 h-1.5 bg-dark-900 rounded-full overflow-hidden">
+        <div class="${netFlow >= 0 ? 'bg-green-500' : 'bg-red-500'} h-full rounded-full" style="width:${Math.min(Math.abs(netFlow) / Math.max(d.totalReceipts, d.totalPayments, 1) * 100, 100)}%"></div>
+      </div>
+    </div>
+    <div class="bg-dark-800 rounded-xl border border-dark-700 p-4">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-gray-500 text-xs">نسبة الترحيل</span>
+        <i class="fas fa-check-double ${postingRate >= 80 ? 'text-green-400' : postingRate >= 50 ? 'text-yellow-400' : 'text-red-400'}"></i>
+      </div>
+      <div class="text-xl font-bold text-white">${postingRate}%</div>
+      <div class="mt-2 h-1.5 bg-dark-900 rounded-full overflow-hidden">
+        <div class="${postingRate >= 80 ? 'bg-green-500' : postingRate >= 50 ? 'bg-yellow-500' : 'bg-red-500'} h-full rounded-full" style="width:${postingRate}%"></div>
+      </div>
+    </div>
+    <div class="bg-dark-800 rounded-xl border border-dark-700 p-4">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-gray-500 text-xs">متوسط قيمة القيد</span>
+        <i class="fas fa-calculator text-primary-400"></i>
+      </div>
+      <div class="text-xl font-bold text-white">${formatNumber(avgEntry)}</div>
+      <div class="text-gray-600 text-[10px] mt-1">${d.totalEntries} قيد إجمالي</div>
+    </div>
+  </div>`;
+
+  return html;
 }
 
 // ╔══════════════════════════════════════════════════╗
@@ -476,6 +695,20 @@ async function renderAccounts(el) {
   if (!res.success) { el.innerHTML = '<p class="text-red-400">خطأ في جلب البيانات</p>'; return; }
   accountsCache = res.data;
 
+  // Build lookup maps for performance
+  window._accountMap = {};
+  window._accountChildren = {};
+  accountsCache.forEach(a => {
+    window._accountMap[a.id] = a;
+    const pid = a.parent_id || 'root';
+    if (!window._accountChildren[pid]) window._accountChildren[pid] = [];
+    window._accountChildren[pid].push(a);
+  });
+
+  const totalBalance = accountsCache.reduce((s, a) => s + (a.is_parent ? 0 : Math.abs(a.current_balance || 0)), 0);
+  const typeCount = {};
+  accountsCache.forEach(a => { typeCount[a.account_type] = (typeCount[a.account_type] || 0) + 1; });
+
   el.innerHTML = `
     <div class="flex items-center justify-between mb-6">
       <div>
@@ -483,13 +716,13 @@ async function renderAccounts(el) {
         <p class="text-gray-500 text-sm mt-1">${accountsCache.length} حساب مسجل</p>
       </div>
       <div class="flex gap-2">
-        <button onclick="toggleAccountView()" id="viewToggleBtn" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm" title="تبديل العرض">
+        <button onclick="toggleAccountView()" id="viewToggleBtn" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm transition" title="تبديل العرض">
           <i class="fas fa-th-list"></i>
         </button>
-        <button onclick="expandAllTree()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm" title="فتح الكل">
+        <button onclick="expandAllTree()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm transition" title="فتح الكل">
           <i class="fas fa-expand-alt"></i>
         </button>
-        <button onclick="collapseAllTree()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm" title="إغلاق الكل">
+        <button onclick="collapseAllTree()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm transition" title="إغلاق الكل">
           <i class="fas fa-compress-alt"></i>
         </button>
         <button onclick="showAddAccountModal()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-xl text-sm flex items-center gap-2 transition">
@@ -498,19 +731,49 @@ async function renderAccounts(el) {
       </div>
     </div>
 
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
+      <div class="bg-dark-800 rounded-xl border border-dark-700 p-3 text-center">
+        <div class="text-blue-400 text-lg font-bold">${typeCount.asset || 0}</div>
+        <div class="text-gray-500 text-[10px]">أصول</div>
+      </div>
+      <div class="bg-dark-800 rounded-xl border border-dark-700 p-3 text-center">
+        <div class="text-red-400 text-lg font-bold">${typeCount.liability || 0}</div>
+        <div class="text-gray-500 text-[10px]">خصوم</div>
+      </div>
+      <div class="bg-dark-800 rounded-xl border border-dark-700 p-3 text-center">
+        <div class="text-yellow-400 text-lg font-bold">${typeCount.equity || 0}</div>
+        <div class="text-gray-500 text-[10px]">ملكية</div>
+      </div>
+      <div class="bg-dark-800 rounded-xl border border-dark-700 p-3 text-center">
+        <div class="text-green-400 text-lg font-bold">${typeCount.revenue || 0}</div>
+        <div class="text-gray-500 text-[10px]">إيرادات</div>
+      </div>
+      <div class="bg-dark-800 rounded-xl border border-dark-700 p-3 text-center">
+        <div class="text-orange-400 text-lg font-bold">${typeCount.expense || 0}</div>
+        <div class="text-gray-500 text-[10px]">مصروفات</div>
+      </div>
+    </div>
+
     <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
-      <div class="p-4 border-b border-dark-700 flex gap-3">
-        <div class="relative flex-1 max-w-md">
+      <div class="p-4 border-b border-dark-700 flex gap-3 flex-wrap">
+        <div class="relative flex-1 min-w-[200px] max-w-md">
           <i class="fas fa-search absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
-          <input type="text" id="accountSearch" onkeyup="filterAccounts()" placeholder="بحث بالرمز أو الاسم..." class="bg-dark-900 border border-dark-600 text-gray-200 rounded-xl pr-10 pl-4 py-2.5 w-full text-sm outline-none focus:border-primary-500 transition">
+          <input type="text" id="accountSearch" onkeyup="filterAccountsInstant(this.value)" placeholder="بحث لحظي بالرمز أو الاسم..." class="bg-dark-900 border border-dark-600 text-gray-200 rounded-xl pr-10 pl-4 py-2.5 w-full text-sm outline-none focus:border-primary-500 transition">
         </div>
-        <select id="accountTypeFilter" onchange="filterAccounts()" class="bg-dark-900 border border-dark-600 text-gray-200 rounded-xl px-3 py-2 text-sm outline-none">
+        <select id="accountTypeFilter" onchange="filterAccountsInstant(document.getElementById('accountSearch')?.value)" class="bg-dark-900 border border-dark-600 text-gray-200 rounded-xl px-3 py-2 text-sm outline-none">
           <option value="">كل الأنواع</option>
           <option value="asset">أصول</option><option value="liability">خصوم</option><option value="equity">ملكية</option>
           <option value="revenue">إيرادات</option><option value="expense">مصروفات</option>
         </select>
+        <select id="accountLevelFilter" onchange="filterAccountsInstant(document.getElementById('accountSearch')?.value)" class="bg-dark-900 border border-dark-600 text-gray-200 rounded-xl px-3 py-2 text-sm outline-none">
+          <option value="">كل المستويات</option>
+          <option value="1">المستوى 1</option><option value="2">المستوى 2</option>
+          <option value="3">المستوى 3</option><option value="4">المستوى 4</option>
+        </select>
+        <div id="accountSearchCount" class="hidden flex items-center text-xs text-primary-400 bg-primary-500/10 px-3 rounded-xl"></div>
       </div>
-      <div id="accountsTreeView" class="p-4">${buildAccountsTree(accountsCache)}</div>
+      <div id="accountsTreeView" class="p-4 min-h-[200px]">${buildAccountsTree(accountsCache)}</div>
       <div id="accountsTableView" class="hidden overflow-x-auto">
         <table class="w-full text-sm">
           <thead><tr class="bg-dark-900 text-gray-400 text-xs uppercase">
@@ -523,6 +786,7 @@ async function renderAccounts(el) {
       </div>
     </div>`;
   renderAccountsTable();
+  initAccountDragDrop();
 }
 
 function buildAccountsTree(accounts) {
@@ -530,21 +794,29 @@ function buildAccountsTree(accounts) {
   const typeColors = { asset: 'text-blue-400', liability: 'text-red-400', equity: 'text-yellow-400', revenue: 'text-green-400', expense: 'text-orange-400' };
   const typeBg = { asset: 'bg-blue-500/10', liability: 'bg-red-500/10', equity: 'bg-yellow-500/10', revenue: 'bg-green-500/10', expense: 'bg-orange-500/10' };
 
+  // Build children map for O(n) performance
+  const childrenMap = {};
+  accounts.forEach(a => {
+    const pid = a.parent_id || 'root';
+    if (!childrenMap[pid]) childrenMap[pid] = [];
+    childrenMap[pid].push(a);
+  });
+
   function buildNode(parentId, level) {
-    const children = accounts.filter(a => a.parent_id === parentId);
+    const children = childrenMap[parentId || 'root'] || [];
     if (children.length === 0) return '';
     return children.map(a => {
-      const hasChildren = accounts.some(c => c.parent_id === a.id);
+      const hasChildren = childrenMap[a.id] && childrenMap[a.id].length > 0;
       const indent = level * 20;
       const balanceText = a.is_parent ? '' : `<span class="font-mono text-xs ${a.current_balance >= 0 ? 'text-green-400' : 'text-red-400'}">${formatNumber(a.current_balance)}</span>`;
       if (hasChildren) {
-        return `<div class="tree-node" data-type="${a.account_type}" data-name="${a.name_ar} ${a.code}">
-          <div class="flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-dark-700/50 cursor-pointer transition group" style="padding-right:${indent + 12}px" onclick="this.parentElement.classList.toggle('tree-closed')">
+        return `<div class="tree-node" data-id="${a.id}" data-type="${a.account_type}" data-level="${a.level}" data-name="${a.name_ar} ${a.code}" data-code="${a.code}" draggable="true">
+          <div class="flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-dark-700/50 cursor-pointer transition group tree-row" style="padding-right:${indent + 12}px" onclick="this.parentElement.classList.toggle('tree-closed')">
             <i class="fas fa-chevron-down text-[10px] text-gray-500 transition-transform tree-chevron"></i>
             <i class="fas fa-folder-open text-yellow-500 text-sm tree-icon-open"></i>
             <i class="fas fa-folder text-yellow-600 text-sm tree-icon-closed hidden"></i>
-            <span class="text-primary-400 font-mono text-xs">${a.code}</span>
-            <span class="text-white font-medium text-sm flex-1">${a.name_ar}</span>
+            <span class="text-primary-400 font-mono text-xs acc-code">${a.code}</span>
+            <span class="text-white font-medium text-sm flex-1 acc-name">${a.name_ar}</span>
             <span class="${typeColors[a.account_type]} ${typeBg[a.account_type]} text-[10px] px-2 py-0.5 rounded-full font-medium">${types[a.account_type]}</span>
             ${balanceText}
             <div class="opacity-0 group-hover:opacity-100 transition flex gap-1">
@@ -555,11 +827,11 @@ function buildAccountsTree(accounts) {
           <div class="tree-children mr-2 border-r border-dark-700/50">${buildNode(a.id, level + 1)}</div>
         </div>`;
       }
-      return `<div class="tree-node" data-type="${a.account_type}" data-name="${a.name_ar} ${a.code}">
-        <div class="flex items-center gap-2 py-1.5 px-3 rounded-lg hover:bg-dark-700/50 transition group" style="padding-right:${indent + 28}px">
+      return `<div class="tree-node" data-id="${a.id}" data-type="${a.account_type}" data-level="${a.level}" data-name="${a.name_ar} ${a.code}" data-code="${a.code}" draggable="true">
+        <div class="flex items-center gap-2 py-1.5 px-3 rounded-lg hover:bg-dark-700/50 transition group tree-row" style="padding-right:${indent + 28}px">
           <i class="fas fa-file-invoice text-gray-600 text-xs"></i>
-          <span class="text-primary-400 font-mono text-xs">${a.code}</span>
-          <span class="text-gray-300 text-sm flex-1">${a.name_ar}</span>
+          <span class="text-primary-400 font-mono text-xs acc-code">${a.code}</span>
+          <span class="text-gray-300 text-sm flex-1 acc-name">${a.name_ar}</span>
           ${balanceText}
           <div class="opacity-0 group-hover:opacity-100 transition flex gap-1">
             <button onclick="showEditAccountModal(${a.id})" class="text-primary-400 hover:text-primary-300 p-1" title="تعديل"><i class="fas fa-edit text-xs"></i></button>
@@ -608,19 +880,139 @@ function renderAccountsTable() {
   }).join('');
 }
 
-function filterAccounts() {
-  const q = (document.getElementById('accountSearch')?.value || '').toLowerCase();
+function filterAccountsInstant(query) {
+  const q = (query || '').toLowerCase().trim();
   const typeFilter = document.getElementById('accountTypeFilter')?.value || '';
+  const levelFilter = document.getElementById('accountLevelFilter')?.value || '';
+  const countEl = document.getElementById('accountSearchCount');
+  let matchCount = 0;
+
+  // Reset highlighting
+  document.querySelectorAll('.acc-name, .acc-code').forEach(el => {
+    el.innerHTML = el.textContent;
+  });
+
   document.querySelectorAll('.tree-node').forEach(n => {
     const name = (n.dataset.name || '').toLowerCase();
     const type = n.dataset.type || '';
-    n.style.display = (!q || name.includes(q)) && (!typeFilter || type === typeFilter) ? '' : 'none';
+    const level = n.dataset.level || '';
+    const matchesQuery = !q || name.includes(q);
+    const matchesType = !typeFilter || type === typeFilter;
+    const matchesLevel = !levelFilter || level === levelFilter;
+    const visible = matchesQuery && matchesType && matchesLevel;
+
+    n.style.display = visible ? '' : 'none';
+
+    if (visible && q) {
+      matchCount++;
+      // Expand parents
+      let parent = n.parentElement;
+      while (parent) {
+        if (parent.classList?.contains('tree-node')) {
+          parent.style.display = '';
+          parent.classList.remove('tree-closed');
+        }
+        parent = parent.parentElement;
+      }
+      // Highlight matching text
+      const highlightText = (el) => {
+        const text = el.textContent;
+        const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+        el.innerHTML = text.replace(regex, '<mark class="bg-yellow-500/30 text-yellow-200 rounded px-0.5">$1</mark>');
+      };
+      n.querySelectorAll(':scope > .tree-row .acc-name, :scope > .tree-row .acc-code, :scope > div > .tree-row .acc-name, :scope > div > .tree-row .acc-code').forEach(highlightText);
+    }
   });
+
+  // Update table too
   document.querySelectorAll('#accountsTableBody tr').forEach(r => {
     const name = (r.dataset.name || '').toLowerCase();
     const type = r.dataset.type || '';
     r.style.display = (!q || name.includes(q)) && (!typeFilter || type === typeFilter) ? '' : 'none';
   });
+
+  // Show count
+  if (countEl) {
+    if (q) {
+      countEl.classList.remove('hidden');
+      countEl.textContent = `${matchCount} نتيجة`;
+    } else {
+      countEl.classList.add('hidden');
+    }
+  }
+}
+
+// Drag & Drop for Account Tree
+let draggedAccountId = null;
+
+function initAccountDragDrop() {
+  const treeView = document.getElementById('accountsTreeView');
+  if (!treeView) return;
+
+  treeView.addEventListener('dragstart', (e) => {
+    const node = e.target.closest('.tree-node');
+    if (!node) return;
+    draggedAccountId = node.dataset.id;
+    e.dataTransfer.setData('text/plain', draggedAccountId);
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => node.classList.add('opacity-40'), 0);
+  });
+
+  treeView.addEventListener('dragend', (e) => {
+    const node = e.target.closest('.tree-node');
+    if (node) node.classList.remove('opacity-40');
+    document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+    draggedAccountId = null;
+  });
+
+  treeView.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const row = e.target.closest('.tree-row');
+    if (row) {
+      document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+      row.classList.add('drag-over');
+    }
+  });
+
+  treeView.addEventListener('dragleave', (e) => {
+    const row = e.target.closest('.tree-row');
+    if (row) row.classList.remove('drag-over');
+  });
+
+  treeView.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+    const targetNode = e.target.closest('.tree-node');
+    if (!targetNode || !draggedAccountId) return;
+    const targetId = targetNode.dataset.id;
+    if (targetId === draggedAccountId) return;
+
+    const draggedAcc = accountsCache.find(a => a.id == draggedAccountId);
+    const targetAcc = accountsCache.find(a => a.id == targetId);
+    if (!draggedAcc || !targetAcc) return;
+
+    showConfirm('نقل حساب',
+      `هل تريد نقل "<strong>${draggedAcc.name_ar}</strong>" ليصبح فرعياً من "<strong>${targetAcc.name_ar}</strong>"؟`,
+      async () => {
+        const res = await apiFetch(`/accounts/${draggedAccountId}/move`, {
+          method: 'PUT',
+          body: JSON.stringify({ new_parent_id: parseInt(targetId) })
+        });
+        if (res.success) {
+          showToast(res.message);
+          navigate('/accounts');
+        } else {
+          showToast(res.message, 'error');
+        }
+      }
+    );
+  });
+}
+
+// Keep old function for compatibility
+function filterAccounts() {
+  filterAccountsInstant(document.getElementById('accountSearch')?.value);
 }
 
 function showAddAccountModal(parentId = null) {
@@ -736,7 +1128,10 @@ async function renderJournal(el) {
   el.innerHTML = `
     <div class="flex items-center justify-between mb-6">
       <div><h2 class="text-2xl font-bold text-white">القيود اليومية</h2><p class="text-gray-500 text-sm mt-1">${res.total} قيد مسجل</p></div>
-      <button onclick="showAddJournalModal()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2.5 rounded-xl text-sm flex items-center gap-2 transition"><i class="fas fa-plus"></i> قيد جديد</button>
+      <div class="flex gap-2">
+        <button onclick="showJournalTemplates()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-4 py-2.5 rounded-xl text-sm flex items-center gap-2 transition" title="قوالب جاهزة"><i class="fas fa-file-code"></i> قوالب</button>
+        <button onclick="showAddJournalModal()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2.5 rounded-xl text-sm flex items-center gap-2 transition"><i class="fas fa-plus"></i> قيد جديد</button>
+      </div>
     </div>
     <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 mb-4">
       <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -772,8 +1167,11 @@ function journalRow(e) {
       ${e.status==='draft'?`
         <button onclick="postJournalEntry(${e.id})" class="text-green-400 hover:text-green-300 p-1 mx-0.5" title="ترحيل"><i class="fas fa-check-circle"></i></button>
         <button onclick="showEditJournalModal(${e.id})" class="text-primary-400 hover:text-primary-300 p-1 mx-0.5" title="تعديل"><i class="fas fa-edit"></i></button>
+        <button onclick="copyJournalEntry(${e.id})" class="text-cyan-400 hover:text-cyan-300 p-1 mx-0.5" title="نسخ"><i class="fas fa-copy"></i></button>
         <button onclick="deleteJournalEntry(${e.id})" class="text-red-400 hover:text-red-300 p-1 mx-0.5" title="حذف"><i class="fas fa-trash"></i></button>
-      `:`<button onclick="viewJournalEntry(${e.id})" class="text-primary-400 hover:text-primary-300 p-1" title="عرض"><i class="fas fa-eye"></i></button>`}
+      `:`<button onclick="viewJournalEntry(${e.id})" class="text-primary-400 hover:text-primary-300 p-1 mx-0.5" title="عرض"><i class="fas fa-eye"></i></button>
+         <button onclick="copyJournalEntry(${e.id})" class="text-cyan-400 hover:text-cyan-300 p-1 mx-0.5" title="نسخ"><i class="fas fa-copy"></i></button>
+         <button onclick="reverseJournalEntry(${e.id})" class="text-yellow-400 hover:text-yellow-300 p-1 mx-0.5" title="عكس"><i class="fas fa-undo"></i></button>`}
     </td></tr>`;
 }
 
@@ -801,14 +1199,34 @@ async function showJournalModal(entryId = null, prefillData = null) {
   const accRes = await apiFetch('/accounts/leaf/all');
   const accounts = accRes.success ? accRes.data : [];
   window._jeAccOptions = accounts.map(a => `<option value="${a.id}">${a.code} - ${a.name_ar}</option>`).join('');
+
+  // Load currencies
+  if (currenciesCache.length === 0) {
+    const currRes = await apiFetch('/admin/currencies');
+    if (currRes.success) currenciesCache = currRes.data || currRes.currencies || [];
+  }
+  window._jeCurrOptions = currenciesCache.map(c => `<option value="${c.id}" data-rate="${c.exchange_rate}" ${c.is_default ? 'selected' : ''}>${c.code} - ${c.name_ar}</option>`).join('');
+
   const title = entryId ? `تعديل القيد #${prefillData?.entry_number || ''}` : 'قيد محاسبي جديد';
   showModal(title, `
     <div class="space-y-4">
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-3 gap-4">
         ${inputField('jeDate', 'التاريخ *', 'date', prefillData?.entry_date || todayStr())}
         ${inputField('jeRef', 'المرجع', 'text', prefillData?.reference || '')}
+        <div>
+          <label class="block text-gray-400 text-xs mb-1.5 font-medium">العملة</label>
+          <select id="jeCurrency" onchange="updateCurrencyRate()" class="bg-dark-900 border border-dark-600 rounded-xl px-3 py-2.5 w-full text-gray-200 text-sm outline-none focus:border-primary-500 transition">
+            ${window._jeCurrOptions || '<option value="1">د.ع - دينار عراقي</option>'}
+          </select>
+        </div>
       </div>
-      ${inputField('jeDesc', 'الوصف / البيان', 'text', prefillData?.description || '')}
+      <div class="grid grid-cols-2 gap-4">
+        ${inputField('jeDesc', 'الوصف / البيان', 'text', prefillData?.description || '')}
+        <div id="exchangeRateRow" class="hidden">
+          <label class="block text-gray-400 text-xs mb-1.5 font-medium">سعر الصرف</label>
+          <input type="number" id="jeExchangeRate" value="1" step="0.0001" min="0" class="bg-dark-900 border border-dark-600 rounded-xl px-3 py-2.5 w-full text-gray-200 text-sm outline-none focus:border-primary-500 transition">
+        </div>
+      </div>
       <input type="hidden" id="jeEntryId" value="${entryId || ''}">
       <div>
         <div class="flex items-center justify-between mb-2">
@@ -828,12 +1246,14 @@ async function showJournalModal(entryId = null, prefillData = null) {
             <span>مدين: <strong id="jeTotalDebit" class="text-green-400 font-mono">0</strong></span>
             <span>دائن: <strong id="jeTotalCredit" class="text-red-400 font-mono">0</strong></span>
             <span id="jeBalance" class="font-bold"></span>
+            <span id="jeLocalAmount" class="text-gray-500 text-xs hidden"></span>
           </div>
         </div>
       </div>
     </div>`,
     `<button onclick="closeModal()" class="px-5 py-2.5 rounded-xl bg-dark-600 text-gray-300 text-sm">إلغاء</button>
      <button onclick="saveJournalEntry()" class="px-5 py-2.5 rounded-xl bg-primary-600 text-white text-sm"><i class="fas fa-save ml-1"></i> ${entryId ? 'حفظ التعديلات' : 'حفظ القيد'}</button>`, 'max-w-3xl');
+  updateCurrencyRate();
   if (prefillData?.lines?.length > 0) {
     prefillData.lines.forEach(l => {
       addJournalLine();
@@ -845,6 +1265,20 @@ async function showJournalModal(entryId = null, prefillData = null) {
     });
     calcJournalTotals();
   } else { addJournalLine(); addJournalLine(); }
+}
+
+function updateCurrencyRate() {
+  const select = document.getElementById('jeCurrency');
+  const rateRow = document.getElementById('exchangeRateRow');
+  const rateInput = document.getElementById('jeExchangeRate');
+  if (!select) return;
+  const selectedOption = select.options[select.selectedIndex];
+  const rate = parseFloat(selectedOption?.dataset?.rate || 1);
+  if (rateInput) rateInput.value = rate;
+  if (rateRow) {
+    rateRow.classList.toggle('hidden', rate === 1);
+  }
+  calcJournalTotals();
 }
 
 async function showAddJournalModal() { await showJournalModal(); }
@@ -873,23 +1307,34 @@ function calcJournalTotals() {
   document.querySelectorAll('.je-debit').forEach(i => td += parseFloat(i.value || 0));
   document.querySelectorAll('.je-credit').forEach(i => tc += parseFloat(i.value || 0));
   const tdEl = document.getElementById('jeTotalDebit'), tcEl = document.getElementById('jeTotalCredit'), balEl = document.getElementById('jeBalance');
+  const localEl = document.getElementById('jeLocalAmount');
   if (tdEl) tdEl.textContent = formatNumber(td);
   if (tcEl) tcEl.textContent = formatNumber(tc);
   const diff = Math.abs(td - tc);
   if (balEl) { balEl.textContent = diff < 0.01 ? '✓ متوازن' : `فرق: ${formatNumber(diff)}`; balEl.className = diff < 0.01 ? 'text-green-400 font-bold' : 'text-yellow-400 font-bold'; }
+  // Show local equivalent if not default currency
+  const rate = parseFloat(document.getElementById('jeExchangeRate')?.value || 1);
+  if (localEl && rate !== 1 && rate > 0) {
+    localEl.classList.remove('hidden');
+    localEl.textContent = `≈ ${formatNumber(td * rate)} بالعملة المحلية`;
+  } else if (localEl) {
+    localEl.classList.add('hidden');
+  }
 }
 
 async function saveJournalEntry() {
+  const currencyId = parseInt(document.getElementById('jeCurrency')?.value || 1);
+  const exchangeRate = parseFloat(document.getElementById('jeExchangeRate')?.value || 1);
   const lines = [];
   document.querySelectorAll('.journal-line').forEach(row => {
     const acc = row.querySelector('.je-account').value;
     const debit = parseFloat(row.querySelector('.je-debit').value || 0);
     const credit = parseFloat(row.querySelector('.je-credit').value || 0);
     const desc = row.querySelector('.je-line-desc').value;
-    if (acc && (debit > 0 || credit > 0)) lines.push({ account_id: parseInt(acc), debit, credit, description: desc });
+    if (acc && (debit > 0 || credit > 0)) lines.push({ account_id: parseInt(acc), debit, credit, description: desc, currency_id: currencyId, exchange_rate: exchangeRate });
   });
   const entryId = document.getElementById('jeEntryId')?.value;
-  const data = { entry_date: document.getElementById('jeDate').value, description: document.getElementById('jeDesc').value, reference: document.getElementById('jeRef').value, lines, created_by: getUser()?.id };
+  const data = { entry_date: document.getElementById('jeDate').value, description: document.getElementById('jeDesc').value, reference: document.getElementById('jeRef').value, lines, created_by: getUser()?.id, currency_id: currencyId, exchange_rate: exchangeRate };
   let res;
   if (entryId) res = await apiFetch(`/journal/${entryId}`, { method: 'PUT', body: JSON.stringify(data) });
   else res = await apiFetch('/journal', { method: 'POST', body: JSON.stringify(data) });
@@ -931,6 +1376,8 @@ async function viewJournalEntry(id) {
       <div class="print-only mt-8 grid grid-cols-3 gap-4 text-center text-sm"><div><p class="border-t border-black pt-2">المحاسب</p></div><div><p class="border-t border-black pt-2">المدقق</p></div><div><p class="border-t border-black pt-2">المدير المالي</p></div></div>
     </div>`,
     `${e.status==='draft'?`<button onclick="closeModal();showEditJournalModal(${e.id})" class="px-5 py-2.5 rounded-xl bg-dark-600 text-gray-300 text-sm"><i class="fas fa-edit ml-1"></i> تعديل</button>`:''}
+     <button onclick="closeModal();copyJournalEntry(${e.id})" class="px-5 py-2.5 rounded-xl bg-dark-600 text-gray-300 text-sm" title="نسخ القيد"><i class="fas fa-copy ml-1"></i> نسخ</button>
+     ${e.status==='posted'?`<button onclick="closeModal();reverseJournalEntry(${e.id})" class="px-5 py-2.5 rounded-xl bg-yellow-600/20 text-yellow-400 hover:bg-yellow-600/30 text-sm" title="عكس القيد"><i class="fas fa-undo ml-1"></i> عكس</button>`:''}
      <button onclick="window.print()" class="px-5 py-2.5 rounded-xl bg-dark-600 text-gray-300 text-sm"><i class="fas fa-print ml-1"></i> طباعة</button>
      <button onclick="closeModal()" class="px-5 py-2.5 rounded-xl bg-primary-600 text-white text-sm">إغلاق</button>`, 'max-w-3xl');
 }
@@ -946,6 +1393,131 @@ async function deleteJournalEntry(id) {
     const res = await apiFetch(`/journal/${id}`, { method: 'DELETE' });
     if (res.success) { showToast(res.message); navigate('/journal'); } else showToast(res.message, 'error');
   });
+}
+
+// ===== Journal: Copy, Reverse, Templates =====
+async function copyJournalEntry(id) {
+  const res = await apiFetch(`/journal/${id}`);
+  if (!res.success) { showToast('خطأ في جلب بيانات القيد', 'error'); return; }
+  const entry = res.data;
+  // Create a copy with today's date
+  const copyData = {
+    entry_date: todayStr(),
+    description: 'نسخة من: ' + (entry.description || 'قيد #' + entry.entry_number),
+    reference: entry.reference || '',
+    lines: entry.lines.map(l => ({
+      account_id: l.account_id,
+      debit: l.debit,
+      credit: l.credit,
+      description: l.description
+    }))
+  };
+  await showJournalModal(null, copyData);
+  showToast('تم نسخ القيد - عدّل وأحفظ', 'info');
+}
+
+async function reverseJournalEntry(id) {
+  const res = await apiFetch(`/journal/${id}`);
+  if (!res.success) { showToast('خطأ في جلب بيانات القيد', 'error'); return; }
+  const entry = res.data;
+  showConfirm('عكس القيد', `سيتم إنشاء قيد عكسي للقيد #${entry.entry_number}. هل تريد المتابعة؟`, async () => {
+    const reverseData = {
+      entry_date: todayStr(),
+      description: 'عكس قيد رقم ' + entry.entry_number + (entry.description ? ' - ' + entry.description : ''),
+      reference: 'REV-' + entry.entry_number,
+      lines: entry.lines.map(l => ({
+        account_id: l.account_id,
+        debit: l.credit,
+        credit: l.debit,
+        description: 'عكس: ' + (l.description || '')
+      })),
+      created_by: getUser()?.id
+    };
+    const saveRes = await apiFetch('/journal', { method: 'POST', body: JSON.stringify(reverseData) });
+    if (saveRes.success) {
+      showToast('تم إنشاء القيد العكسي بنجاح');
+      addNotification('قيد عكسي', `تم عكس القيد رقم ${entry.entry_number}`, 'info');
+      navigate('/journal');
+    } else {
+      showToast(saveRes.message, 'error');
+    }
+  });
+}
+
+// Journal Entry Templates
+const journalTemplates = [
+  {
+    name: 'مصاريف رواتب',
+    icon: 'fa-users',
+    description: 'قيد صرف رواتب الموظفين',
+    data: { description: 'صرف رواتب شهر', reference: 'SAL', lines: [
+      { debit: 0, credit: 0, description: 'مصروف رواتب - مدين' },
+      { debit: 0, credit: 0, description: 'الصندوق/البنك - دائن' }
+    ]}
+  },
+  {
+    name: 'إيجار مدفوع',
+    icon: 'fa-building',
+    description: 'قيد دفع إيجار',
+    data: { description: 'دفع إيجار', reference: 'RENT', lines: [
+      { debit: 0, credit: 0, description: 'مصروف إيجار' },
+      { debit: 0, credit: 0, description: 'الصندوق/البنك' }
+    ]}
+  },
+  {
+    name: 'مبيعات نقدية',
+    icon: 'fa-cash-register',
+    description: 'قيد مبيعات نقدية',
+    data: { description: 'مبيعات نقدية', reference: 'SALE', lines: [
+      { debit: 0, credit: 0, description: 'الصندوق - مدين' },
+      { debit: 0, credit: 0, description: 'إيرادات مبيعات - دائن' }
+    ]}
+  },
+  {
+    name: 'شراء بضاعة',
+    icon: 'fa-boxes-stacked',
+    description: 'قيد شراء بضاعة',
+    data: { description: 'شراء بضاعة', reference: 'PUR', lines: [
+      { debit: 0, credit: 0, description: 'مشتريات - مدين' },
+      { debit: 0, credit: 0, description: 'الصندوق/الموردين - دائن' }
+    ]}
+  },
+  {
+    name: 'مصاريف عامة',
+    icon: 'fa-receipt',
+    description: 'قيد مصاريف عامة',
+    data: { description: 'مصاريف عامة', reference: 'EXP', lines: [
+      { debit: 0, credit: 0, description: 'مصروف - مدين' },
+      { debit: 0, credit: 0, description: 'الصندوق - دائن' }
+    ]}
+  }
+];
+
+function showJournalTemplates() {
+  const content = `
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      ${journalTemplates.map((t, i) => `
+        <button onclick="closeModal();applyJournalTemplate(${i})" class="text-right p-4 bg-dark-900 rounded-xl border border-dark-700 hover:border-primary-500/50 hover:bg-dark-800 transition group">
+          <div class="flex items-center gap-3 mb-2">
+            <div class="w-10 h-10 rounded-xl bg-primary-500/10 flex items-center justify-center group-hover:bg-primary-500/20 transition">
+              <i class="fas ${t.icon} text-primary-400"></i>
+            </div>
+            <div>
+              <h4 class="text-white font-bold text-sm">${t.name}</h4>
+              <p class="text-gray-500 text-xs">${t.description}</p>
+            </div>
+          </div>
+        </button>
+      `).join('')}
+    </div>`;
+  showModal('قوالب القيود الجاهزة', content, '', 'max-w-2xl');
+}
+
+async function applyJournalTemplate(index) {
+  const template = journalTemplates[index];
+  if (!template) return;
+  await showJournalModal(null, { ...template.data, entry_date: todayStr() });
+  showToast(`تم تحميل قالب "${template.name}" - عدّل المبالغ والحسابات`, 'info');
 }
 
 // ╔══════════════════════════════════════════════════╗
@@ -2383,5 +2955,18 @@ function exportBalanceSheetExcel() {
     const notifPanel = document.getElementById('notifPanel');
     const notifContainer = document.getElementById('notifContainer');
     if (notifPanel && notifContainer && !notifContainer.contains(e.target)) notifPanel.classList.add('hidden');
+    // Close search results on outside click
+    const searchContainer = document.getElementById('globalSearchContainer');
+    const searchResults = document.getElementById('globalSearchResults');
+    if (searchResults && searchContainer && !searchContainer.contains(e.target)) searchResults.classList.add('hidden');
+  });
+
+  // Keyboard shortcut Ctrl+K for global search
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      const input = document.getElementById('globalSearchInput');
+      if (input) { input.focus(); input.select(); }
+    }
   });
 })();

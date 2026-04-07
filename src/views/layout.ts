@@ -86,6 +86,19 @@ export function mainLayout(): string {
             </div>
           </div>
           <div class="flex items-center gap-3">
+            <!-- Global Search -->
+            <div class="relative" id="globalSearchContainer">
+              <div class="relative">
+                <i class="fas fa-search absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
+                <input type="text" id="globalSearchInput" placeholder="بحث شامل... (Ctrl+K)" autocomplete="off"
+                  class="bg-dark-800 border border-dark-600 text-gray-200 rounded-xl pr-10 pl-10 py-2 w-64 text-sm outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 transition placeholder:text-gray-600"
+                  oninput="handleGlobalSearch(this.value)" onfocus="showSearchResults()" onkeydown="handleSearchKeydown(event)">
+                <kbd class="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-600 border border-dark-600 rounded px-1 py-0.5 hidden sm:inline">Ctrl+K</kbd>
+              </div>
+              <div id="globalSearchResults" class="hidden absolute left-0 right-0 top-full mt-2 bg-dark-800 border border-dark-600 rounded-2xl shadow-2xl overflow-hidden z-50 max-h-96 overflow-y-auto w-96" style="left: auto; right: 0;">
+                <div id="searchResultsContent" class="p-2"></div>
+              </div>
+            </div>
             <span class="text-xs text-gray-500" id="currentDate"></span>
             <span id="fiscalYearBadge"></span>
             <!-- Notifications -->

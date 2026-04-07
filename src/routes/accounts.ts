@@ -126,6 +126,77 @@ accountRoutes.get('/search/:query', async (c) => {
   }
 })
 
+// نقل حساب إلى أب جديد (drag & drop)
+accountRoutes.put('/:id/move', async (c) => {
+  try {
+    const id = c.req.param('id')
+    const { new_parent_id } = await c.req.json()
+    
+    const account = await c.env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first() as any
+    if (!account) return c.json({ success: false, message: 'الحساب غير موجود' }, 404)
+
+    // Prevent moving to own descendant
+    if (new_parent_id) {
+      let checkId = new_parent_id
+      while (checkId) {
+        if (checkId == id) return c.json({ success: false, message: 'لا يمكن نقل حساب إلى أحد فروعه' }, 400)
+        const parent = await c.env.DB.prepare('SELECT parent_id FROM accounts WHERE id = ?').bind(checkId).first() as any
+        checkId = parent?.parent_id
+      }
+    }
+
+    // Calculate new level
+    let newLevel = 1
+    if (new_parent_id) {
+      const newParent = await c.env.DB.prepare('SELECT level FROM accounts WHERE id = ?').bind(new_parent_id).first() as any
+      if (!newParent) return c.json({ success: false, message: 'الحساب الأب الجديد غير موجود' }, 404)
+      newLevel = newParent.level + 1
+      // Ensure max 4 levels
+      if (newLevel > 4) return c.json({ success: false, message: 'لا يمكن تجاوز 4 مستويات' }, 400)
+    }
+
+    const oldParentId = account.parent_id
+    const levelDiff = newLevel - account.level
+
+    // Update the account
+    await c.env.DB.prepare('UPDATE accounts SET parent_id = ?, level = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(new_parent_id || null, newLevel, id).run()
+
+    // Update children levels recursively (simple approach via updating all descendants)
+    if (levelDiff !== 0) {
+      const updateDescendants = async (parentId: any, parentLevel: number) => {
+        const { results: children } = await c.env.DB.prepare('SELECT id FROM accounts WHERE parent_id = ?').bind(parentId).all() as any
+        for (const child of children) {
+          const childLevel = parentLevel + 1
+          await c.env.DB.prepare('UPDATE accounts SET level = ? WHERE id = ?').bind(childLevel, child.id).run()
+          await updateDescendants(child.id, childLevel)
+        }
+      }
+      await updateDescendants(id, newLevel)
+    }
+
+    // Mark new parent as parent
+    if (new_parent_id) {
+      await c.env.DB.prepare('UPDATE accounts SET is_parent = 1 WHERE id = ?').bind(new_parent_id).run()
+    }
+
+    // Check if old parent still has children, if not unmark
+    if (oldParentId) {
+      const remaining = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM accounts WHERE parent_id = ?').bind(oldParentId).first() as any
+      if (remaining?.cnt === 0) {
+        await c.env.DB.prepare('UPDATE accounts SET is_parent = 0 WHERE id = ?').bind(oldParentId).run()
+      }
+    }
+
+    await c.env.DB.prepare('INSERT INTO audit_log (action, table_name, record_id, new_data) VALUES (?, ?, ?, ?)')
+      .bind('move', 'accounts', id, JSON.stringify({ from_parent: oldParentId, to_parent: new_parent_id })).run()
+
+    return c.json({ success: true, message: 'تم نقل الحساب بنجاح' })
+  } catch (e: any) {
+    return c.json({ success: false, message: e.message }, 500)
+  }
+})
+
 // جلب الحسابات الفرعية فقط (غير أب)
 accountRoutes.get('/leaf/all', async (c) => {
   try {

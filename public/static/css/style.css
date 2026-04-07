@@ -134,3 +134,56 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
     margin-right: 0 !important;
   }
 }
+
+/* Drag & Drop */
+.tree-row.drag-over {
+  outline: 2px dashed #3b82f6 !important;
+  outline-offset: -2px;
+  background: rgba(59, 130, 246, 0.1) !important;
+  border-radius: 8px;
+}
+
+.tree-node[draggable="true"] {
+  cursor: grab;
+}
+
+.tree-node[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.tree-node.opacity-40 {
+  opacity: 0.4;
+}
+
+/* Global Search Highlight */
+mark {
+  background: rgba(234, 179, 8, 0.3);
+  color: #fbbf24;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* Search Results Animation */
+#globalSearchResults {
+  animation: fadeIn 0.15s ease;
+}
+
+.search-result-item {
+  transition: background 0.15s;
+}
+
+/* Account highlight animation */
+@keyframes accountHighlight {
+  0% { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.8); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+
+.ring-2.ring-primary-500 {
+  animation: accountHighlight 0.5s ease;
+}
+
+/* Template cards hover */
+.template-card:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+  transform: translateY(-1px);
+}

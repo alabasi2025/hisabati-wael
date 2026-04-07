@@ -9,6 +9,7 @@ import { reportRoutes } from './routes/reports'
 import { adminRoutes } from './routes/admin'
 import { dashboardRoutes } from './routes/dashboard'
 import { costCenterRoutes } from './routes/costcenters'
+import { searchRoutes } from './routes/search'
 import { authMiddleware, requireRole } from './middleware/auth'
 import { mainLayout } from './views/layout'
 import { loginPage } from './views/login'
@@ -36,6 +37,7 @@ app.use('/api/vouchers/*', authMiddleware)
 app.use('/api/reports/*', authMiddleware)
 app.use('/api/dashboard/*', authMiddleware)
 app.use('/api/cost-centers/*', authMiddleware)
+app.use('/api/search/*', authMiddleware)
 app.use('/api/admin/*', authMiddleware)
 
 // Admin routes require admin or manager role
@@ -49,6 +51,7 @@ app.route('/api/reports', reportRoutes)
 app.route('/api/admin', adminRoutes)
 app.route('/api/dashboard', dashboardRoutes)
 app.route('/api/cost-centers', costCenterRoutes)
+app.route('/api/search', searchRoutes)
 
 // ===== Pages =====
 app.get('/login', (c) => {
