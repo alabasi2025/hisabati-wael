@@ -10,6 +10,7 @@ let menuItems = [];
 let accountsCache = [];
 let currenciesCache = [];
 let costCentersCache = [];
+let companySettings = {};
 let notifications = JSON.parse(localStorage.getItem('notifications') || '[]');
 
 // ===== Auth =====
@@ -348,7 +349,8 @@ function updateBreadcrumb(path) {
     'reports': 'التقارير', 'trial-balance': 'ميزان المراجعة', 'account-statement': 'كشف حساب',
     'income': 'قائمة الدخل', 'balance-sheet': 'الميزانية', 'admin': 'الإدارة',
     'users': 'المستخدمين', 'settings': 'الإعدادات', 'currencies': 'العملات',
-    'fiscal-years': 'السنوات المالية', 'audit-log': 'سجل النشاطات', 'cost-centers': 'مراكز التكلفة'
+    'fiscal-years': 'السنوات المالية', 'audit-log': 'سجل النشاطات', 'cost-centers': 'مراكز التكلفة',
+    'year-end': 'تقرير الإقفال'
   };
   let html = '<a href="#" onclick="navigate(\'/dashboard\')" class="text-gray-500 hover:text-gray-300"><i class="fas fa-home"></i></a>';
   parts.forEach((p, i) => {
@@ -406,6 +408,7 @@ function loadPage(path) {
   else if (path === '/admin/audit-log') renderAuditLog(el);
   else if (path === '/cost-centers') renderCostCenters(el);
   else if (path === '/cost-centers/report') renderCostCenterReport(el);
+  else if (path === '/reports/year-end') renderYearEndClosingReport(el);
   else el.innerHTML = '<div class="text-center text-gray-500 py-20"><i class="fas fa-hard-hat text-6xl mb-4 block"></i><p class="text-xl">الصفحة قيد الإنشاء</p></div>';
 }
 
@@ -1610,6 +1613,13 @@ async function showVoucherForm(type, editData = null) {
   }
   const ccOpts = costCentersCache.filter(c => c.is_active).map(c => ({value: c.id, text: `${c.code} - ${c.name_ar}`}));
 
+  // Load currencies
+  if (currenciesCache.length === 0) {
+    const curRes = await apiFetch('/admin/currencies');
+    if (curRes.success) currenciesCache = curRes.data || [];
+  }
+  const curOpts = currenciesCache.map(c => ({value: c.id, text: `${c.code} - ${c.name_ar} (${c.symbol})`}));
+
   const label = type === 'receipt' ? 'قبض' : 'صرف';
   const isEdit = !!editData;
   const title = isEdit ? `تعديل سند ${label} #${editData.voucher_number}` : `سند ${label} جديد`;
@@ -1627,8 +1637,12 @@ async function showVoucherForm(type, editData = null) {
         ${inputField('vBeneficiary', 'المستفيد / الجهة', 'text', editData?.beneficiary || '')}
         ${selectField('vPayment', 'طريقة الدفع', [{value:'cash',text:'نقداً'},{value:'check',text:'شيك'},{value:'transfer',text:'تحويل بنكي'}], editData?.payment_method || 'cash')}
       </div>
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-3 gap-3">
         ${inputField('vDesc', 'الوصف / البيان', 'text', editData?.description || '')}
+        ${selectField('vCurrency', 'العملة', [{value:'',text:'العملة الافتراضية'}, ...curOpts], editData?.currency_id || '')}
+        ${inputField('vExchangeRate', 'سعر الصرف', 'number', editData?.exchange_rate || '1', 'step="0.0001" min="0"')}
+      </div>
+      <div class="grid grid-cols-1 gap-4">
         ${selectField('vCostCenter', 'مركز التكلفة', [{value:'',text:'-- بدون مركز --'}, ...ccOpts], editData?.cost_center_id || '')}
       </div>
       <div id="checkDetails" class="${editData?.payment_method === 'check' ? '' : 'hidden'} grid grid-cols-3 gap-3">
@@ -1649,6 +1663,17 @@ async function showVoucherForm(type, editData = null) {
 
   document.getElementById('vPayment').addEventListener('change', function() {
     document.getElementById('checkDetails').classList.toggle('hidden', this.value !== 'check');
+  });
+
+  // Update exchange rate when currency changes
+  document.getElementById('vCurrency').addEventListener('change', function() {
+    const curId = parseInt(this.value);
+    const cur = currenciesCache.find(c => c.id === curId);
+    if (cur) {
+      document.getElementById('vExchangeRate').value = cur.exchange_rate || 1;
+    } else {
+      document.getElementById('vExchangeRate').value = 1;
+    }
   });
 
   if (editData?.details?.length > 0) {
@@ -1704,7 +1729,9 @@ async function saveVoucher(type) {
     beneficiary: document.getElementById('vBeneficiary').value, payment_method: document.getElementById('vPayment').value,
     check_number: document.getElementById('vCheckNum')?.value || null, check_date: document.getElementById('vCheckDate')?.value || null,
     bank_name: document.getElementById('vBankName')?.value || null, details, created_by: getUser()?.id,
-    cost_center_id: parseInt(document.getElementById('vCostCenter')?.value) || null
+    cost_center_id: parseInt(document.getElementById('vCostCenter')?.value) || null,
+    currency_id: parseInt(document.getElementById('vCurrency')?.value) || null,
+    exchange_rate: parseFloat(document.getElementById('vExchangeRate')?.value) || 1
   };
 
   let res;
@@ -1721,6 +1748,7 @@ async function viewVoucher(id) {
   const isReceipt = v.voucher_type === 'receipt';
   const typeLabel = isReceipt ? 'سند قبض' : 'سند صرف';
   const typeColor = isReceipt ? 'green' : 'red';
+  const curSymbol = v.currency_symbol || 'د.ع';
   showModal(`${typeLabel} رقم #${v.voucher_number}`, `
     <div id="voucherPrintContent">
       <div class="print-only text-center mb-6 pb-3 border-b-2 border-gray-300">
@@ -1745,7 +1773,10 @@ async function viewVoucher(id) {
       </tr>`).join('')}<tr class="bg-dark-900 font-bold"><td class="px-3 py-2" colspan="3">المجموع</td><td class="px-3 py-2 text-left font-mono text-${typeColor}-400">${formatNumber(v.amount)}</td></tr></tbody></table>` : ''}
       <div class="print-only mt-10 grid grid-cols-3 gap-4 text-center text-sm"><div><p class="border-t border-black pt-2">المحاسب</p></div><div><p class="border-t border-black pt-2">المدقق</p></div><div><p class="border-t border-black pt-2">المدير المالي</p></div></div>
     </div>`,
-    `<button onclick="window.print()" class="px-5 py-2.5 rounded-xl bg-dark-600 text-gray-300 text-sm"><i class="fas fa-print ml-1"></i> طباعة</button>
+    `<button onclick="exportVoucherPDF(${v.id})" class="px-4 py-2.5 rounded-xl bg-red-600/20 text-red-400 hover:bg-red-600/30 text-sm" title="PDF"><i class="fas fa-file-pdf ml-1"></i> PDF</button>
+     <button onclick="closeModal();copyVoucher(${v.id},'${v.voucher_type}')" class="px-4 py-2.5 rounded-xl bg-dark-600 text-cyan-400 hover:bg-dark-500 text-sm"><i class="fas fa-copy ml-1"></i> نسخ</button>
+     ${v.status==='posted'?`<button onclick="closeModal();reverseVoucher(${v.id},'${v.voucher_type}')" class="px-4 py-2.5 rounded-xl bg-yellow-600/20 text-yellow-400 hover:bg-yellow-600/30 text-sm"><i class="fas fa-undo ml-1"></i> عكس</button>`:''}
+     <button onclick="printVoucherDirect(${v.id})" class="px-4 py-2.5 rounded-xl bg-dark-600 text-gray-300 hover:bg-dark-500 text-sm"><i class="fas fa-print ml-1"></i> طباعة</button>
      <button onclick="closeModal()" class="px-5 py-2.5 rounded-xl bg-primary-600 text-white text-sm">إغلاق</button>`, 'max-w-2xl');
 }
 
@@ -3126,10 +3157,11 @@ async function exportPDF(title, contentHtml, orientation = 'portrait') {
   
   const user = getUser();
   const dateStr = new Date().toLocaleDateString('ar-IQ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const companyName = companySettings.company_name || 'النظام المحاسبي الحديث';
   
   container.innerHTML = `
     <div style="text-align:center; border-bottom:3px double #1e3a5f; padding-bottom:15px; margin-bottom:20px;">
-      <h1 style="font-size:20pt; font-weight:bold; color:#1e3a5f; margin:0 0 5px;">النظام المحاسبي الحديث</h1>
+      <h1 style="font-size:20pt; font-weight:bold; color:#1e3a5f; margin:0 0 5px;">${companyName}</h1>
       <h2 style="font-size:14pt; color:#333; margin:0 0 5px;">${title}</h2>
       <p style="font-size:9pt; color:#888;">التاريخ: ${dateStr} | المستخدم: ${user?.fullName || 'مدير'} | ${new Date().toLocaleTimeString('ar-IQ')}</p>
     </div>
@@ -3140,7 +3172,7 @@ async function exportPDF(title, contentHtml, orientation = 'portrait') {
       <div style="padding-top:10px; border-top:1px solid #333;">المدير المالي</div>
     </div>
     <div style="text-align:center; margin-top:30px; font-size:7pt; color:#aaa; border-top:1px solid #ddd; padding-top:8px;">
-      النظام المحاسبي الحديث &copy; ${new Date().getFullYear()} - تم الإنشاء في ${new Date().toLocaleString('ar-IQ')}
+      ${companyName} &copy; ${new Date().getFullYear()} - تم الإنشاء في ${new Date().toLocaleString('ar-IQ')}
     </div>
   `;
   
@@ -3309,6 +3341,7 @@ async function exportVoucherPDF(id) {
 function printReport(title, contentHtml) {
   const printWindow = window.open('', '_blank');
   const user = getUser();
+  const companyName = companySettings.company_name || 'النظام المحاسبي الحديث';
   printWindow.document.write(`<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head><meta charset="UTF-8"><title>${title}</title>
@@ -3331,13 +3364,13 @@ function printReport(title, contentHtml) {
 </style></head>
 <body>
   <div class="header">
-    <h1>النظام المحاسبي</h1>
+    <h1>${companyName}</h1>
     <h2>${title}</h2>
     <p class="meta">التاريخ: ${new Date().toLocaleDateString('ar-IQ')} | المستخدم: ${user?.fullName || 'مدير'} | الوقت: ${new Date().toLocaleTimeString('ar-IQ')}</p>
   </div>
   ${contentHtml}
   <div class="signatures"><div>المحاسب</div><div>المدقق</div><div>المدير المالي</div></div>
-  <div class="footer">النظام المحاسبي الحديث &copy; ${new Date().getFullYear()} - طُبع في ${new Date().toLocaleString('ar-IQ')}</div>
+  <div class="footer">${companyName} &copy; ${new Date().getFullYear()} - طُبع في ${new Date().toLocaleString('ar-IQ')}</div>
   <script>setTimeout(()=>{window.print();window.close()},500)</script>
 </body></html>`);
   printWindow.document.close();
@@ -3390,6 +3423,238 @@ function exportBalanceSheetExcel() {
 }
 
 // ╔══════════════════════════════════════════════════╗
+// ║        YEAR-END CLOSING REPORT (تقرير الإقفال)      ║
+// ╚══════════════════════════════════════════════════╝
+async function renderYearEndClosingReport(el) {
+  el.innerHTML = '<div class="text-center py-10"><i class="fas fa-spinner fa-spin text-2xl text-primary-500"></i></div>';
+  
+  // Load fiscal years and income statement
+  const [fyRes, incRes, bsRes] = await Promise.all([
+    apiFetch('/admin/fiscal-years'),
+    apiFetch('/reports/income-statement'),
+    apiFetch('/reports/balance-sheet')
+  ]);
+  
+  const fiscalYears = fyRes.success ? fyRes.data : [];
+  const activeFY = fiscalYears.find(f => f.is_active);
+  const closedYears = fiscalYears.filter(f => f.is_closed);
+  const inc = incRes.success ? incRes.data : { revenues: [], expenses: [], totalRevenue: 0, totalExpenses: 0, netIncome: 0 };
+  const bs = bsRes.success ? bsRes.data : { totalAssets: 0, totalLiabilities: 0, totalEquity: 0, totalLiabilitiesAndEquity: 0 };
+  
+  const isBalanced = Math.abs(bs.totalAssets - bs.totalLiabilitiesAndEquity) < 0.01;
+  
+  el.innerHTML = `
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h2 class="text-2xl font-bold text-white"><i class="fas fa-calendar-check ml-2 text-amber-400"></i>تقرير إقفال نهاية السنة</h2>
+        <p class="text-gray-500 text-sm mt-1">مراجعة شاملة قبل الإقفال ${activeFY ? '- السنة المالية ' + activeFY.year : ''}</p>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="exportPDF('تقرير إقفال نهاية السنة', document.getElementById('yearEndContent').innerHTML, 'portrait')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-pdf ml-1 text-red-400"></i> PDF</button>
+        <button onclick="printReport('تقرير إقفال نهاية السنة', document.getElementById('yearEndContent').innerHTML)" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button>
+      </div>
+    </div>
+    
+    <div id="yearEndContent">
+    <!-- Status Overview -->
+    <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
+      <div class="bg-dark-800 rounded-2xl border ${activeFY ? 'border-primary-500' : 'border-dark-700'} p-5 text-center">
+        <i class="fas fa-calendar-alt text-3xl ${activeFY ? 'text-primary-400' : 'text-gray-600'} mb-2"></i>
+        <div class="text-xl font-bold text-white">${activeFY ? activeFY.year : '-'}</div>
+        <div class="text-gray-500 text-xs">السنة الحالية</div>
+      </div>
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 p-5 text-center">
+        <i class="fas fa-chart-line text-3xl ${inc.netIncome >= 0 ? 'text-green-400' : 'text-red-400'} mb-2"></i>
+        <div class="text-xl font-bold font-mono ${inc.netIncome >= 0 ? 'text-green-400' : 'text-red-400'}">${formatNumber(Math.abs(inc.netIncome))}</div>
+        <div class="text-gray-500 text-xs">${inc.netIncome >= 0 ? 'صافي الربح' : 'صافي الخسارة'}</div>
+      </div>
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 p-5 text-center">
+        <i class="fas fa-balance-scale text-3xl ${isBalanced ? 'text-green-400' : 'text-red-400'} mb-2"></i>
+        <div class="text-sm font-bold ${isBalanced ? 'text-green-400' : 'text-red-400'}">${isBalanced ? 'متوازنة' : 'غير متوازنة'}</div>
+        <div class="text-gray-500 text-xs">حالة الميزانية</div>
+      </div>
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 p-5 text-center">
+        <i class="fas fa-lock text-3xl text-gray-500 mb-2"></i>
+        <div class="text-xl font-bold text-gray-400">${closedYears.length}</div>
+        <div class="text-gray-500 text-xs">سنوات مغلقة</div>
+      </div>
+    </div>
+    
+    <!-- Income Summary -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
+        <div class="px-5 py-4 border-b border-dark-700">
+          <h3 class="text-green-400 font-bold"><i class="fas fa-arrow-trend-down ml-2"></i>ملخص الإيرادات</h3>
+        </div>
+        <div class="p-5">
+          ${inc.revenues.length === 0 ? '<p class="text-gray-500 text-sm text-center py-3">لا توجد إيرادات</p>' :
+          inc.revenues.slice(0, 10).map(r => `<div class="flex justify-between py-2 border-b border-dark-700/30 text-sm">
+            <span class="text-gray-300"><span class="text-primary-400 font-mono text-xs ml-2">${r.code}</span>${r.name_ar}</span>
+            <span class="text-green-400 font-mono font-bold">${formatNumber(r.balance)}</span>
+          </div>`).join('')}
+          <div class="flex justify-between py-3 font-bold text-green-400 border-t-2 border-green-800/50 mt-2 text-lg">
+            <span>إجمالي الإيرادات</span><span class="font-mono">${formatNumber(inc.totalRevenue)}</span>
+          </div>
+        </div>
+      </div>
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
+        <div class="px-5 py-4 border-b border-dark-700">
+          <h3 class="text-red-400 font-bold"><i class="fas fa-arrow-trend-up ml-2"></i>ملخص المصروفات</h3>
+        </div>
+        <div class="p-5">
+          ${inc.expenses.length === 0 ? '<p class="text-gray-500 text-sm text-center py-3">لا توجد مصروفات</p>' :
+          inc.expenses.slice(0, 10).map(e => `<div class="flex justify-between py-2 border-b border-dark-700/30 text-sm">
+            <span class="text-gray-300"><span class="text-primary-400 font-mono text-xs ml-2">${e.code}</span>${e.name_ar}</span>
+            <span class="text-red-400 font-mono font-bold">${formatNumber(e.balance)}</span>
+          </div>`).join('')}
+          <div class="flex justify-between py-3 font-bold text-red-400 border-t-2 border-red-800/50 mt-2 text-lg">
+            <span>إجمالي المصروفات</span><span class="font-mono">${formatNumber(inc.totalExpenses)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Net Result -->
+    <div class="bg-dark-800 rounded-2xl border ${inc.netIncome >= 0 ? 'border-green-700' : 'border-red-700'} p-6 mb-6 ${inc.netIncome >= 0 ? 'bg-green-900/10' : 'bg-red-900/10'}">
+      <div class="flex justify-between items-center">
+        <div class="flex items-center gap-3">
+          <div class="w-14 h-14 rounded-2xl ${inc.netIncome >= 0 ? 'bg-green-500/20' : 'bg-red-500/20'} flex items-center justify-center">
+            <i class="fas ${inc.netIncome >= 0 ? 'fa-arrow-trend-up text-green-400' : 'fa-arrow-trend-down text-red-400'} text-2xl"></i>
+          </div>
+          <div>
+            <h3 class="text-white font-bold text-lg">${inc.netIncome >= 0 ? 'صافي الربح' : 'صافي الخسارة'}</h3>
+            <p class="text-gray-500 text-sm">سيتم ترحيله إلى حساب الأرباح المحتجزة عند الإقفال</p>
+          </div>
+        </div>
+        <div class="text-3xl font-bold font-mono ${inc.netIncome >= 0 ? 'text-green-400' : 'text-red-400'}">${formatNumber(Math.abs(inc.netIncome))}</div>
+      </div>
+    </div>
+    
+    <!-- Balance Sheet Summary -->
+    <div class="bg-dark-800 rounded-2xl border border-dark-700 p-6 mb-6">
+      <h3 class="text-white font-bold text-lg mb-4"><i class="fas fa-file-alt ml-2 text-blue-400"></i>ملخص الميزانية العمومية</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="bg-dark-900 rounded-xl p-4 text-center">
+          <i class="fas fa-building text-blue-400 text-xl mb-2"></i>
+          <div class="text-xl font-bold text-blue-400 font-mono">${formatNumber(bs.totalAssets)}</div>
+          <div class="text-gray-500 text-xs">إجمالي الأصول</div>
+        </div>
+        <div class="bg-dark-900 rounded-xl p-4 text-center">
+          <i class="fas fa-file-invoice-dollar text-red-400 text-xl mb-2"></i>
+          <div class="text-xl font-bold text-red-400 font-mono">${formatNumber(bs.totalLiabilities)}</div>
+          <div class="text-gray-500 text-xs">إجمالي الخصوم</div>
+        </div>
+        <div class="bg-dark-900 rounded-xl p-4 text-center">
+          <i class="fas fa-landmark text-yellow-400 text-xl mb-2"></i>
+          <div class="text-xl font-bold text-yellow-400 font-mono">${formatNumber(bs.totalEquity)}</div>
+          <div class="text-gray-500 text-xs">حقوق الملكية</div>
+        </div>
+      </div>
+      <div class="mt-4 p-3 rounded-xl ${isBalanced ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}">
+        <div class="flex items-center gap-2 ${isBalanced ? 'text-green-400' : 'text-red-400'} text-sm">
+          <i class="fas ${isBalanced ? 'fa-check-circle' : 'fa-exclamation-triangle'}"></i>
+          <span>${isBalanced ? 'الميزانية متوازنة - جاهزة للإقفال' : 'الميزانية غير متوازنة - يرجى مراجعة القيود قبل الإقفال'}</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Closing Steps Checklist -->
+    <div class="bg-dark-800 rounded-2xl border border-dark-700 p-6 mb-6">
+      <h3 class="text-white font-bold text-lg mb-4"><i class="fas fa-tasks ml-2 text-amber-400"></i>خطوات الإقفال</h3>
+      <div class="space-y-3">
+        <div class="flex items-start gap-3 p-3 bg-dark-900 rounded-xl">
+          <i class="fas fa-check-circle text-green-400 mt-0.5"></i>
+          <div><span class="text-white font-bold text-sm">1. مراجعة القيود</span><p class="text-gray-500 text-xs">التأكد من ترحيل جميع القيود المسودة</p></div>
+        </div>
+        <div class="flex items-start gap-3 p-3 bg-dark-900 rounded-xl">
+          <i class="fas fa-check-circle text-green-400 mt-0.5"></i>
+          <div><span class="text-white font-bold text-sm">2. مراجعة السندات</span><p class="text-gray-500 text-xs">التأكد من ترحيل جميع سندات القبض والصرف</p></div>
+        </div>
+        <div class="flex items-start gap-3 p-3 bg-dark-900 rounded-xl">
+          <i class="fas fa-check-circle text-green-400 mt-0.5"></i>
+          <div><span class="text-white font-bold text-sm">3. مطابقة الميزانية</span><p class="text-gray-500 text-xs">التأكد من توازن الأصول = الخصوم + حقوق الملكية</p></div>
+        </div>
+        <div class="flex items-start gap-3 p-3 bg-dark-900 rounded-xl">
+          <i class="fas fa-circle text-gray-600 mt-0.5"></i>
+          <div><span class="text-white font-bold text-sm">4. إقفال حسابات الإيرادات والمصروفات</span><p class="text-gray-500 text-xs">إنشاء قيد إغلاق تلقائي</p></div>
+        </div>
+        <div class="flex items-start gap-3 p-3 bg-dark-900 rounded-xl">
+          <i class="fas fa-circle text-gray-600 mt-0.5"></i>
+          <div><span class="text-white font-bold text-sm">5. ترحيل الأرصدة الافتتاحية</span><p class="text-gray-500 text-xs">نقل أرصدة الأصول والخصوم وحقوق الملكية للسنة التالية</p></div>
+        </div>
+      </div>
+    </div>
+    </div>
+    
+    <!-- Closed Years History -->
+    ${closedYears.length > 0 ? `
+    <div class="bg-dark-800 rounded-2xl border border-dark-700 p-6 mb-6">
+      <h3 class="text-white font-bold text-lg mb-4"><i class="fas fa-history ml-2 text-gray-400"></i>سجل السنوات المغلقة</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        ${closedYears.map(fy => `
+          <div class="bg-dark-900 rounded-xl p-4 border border-red-900/30">
+            <div class="text-center">
+              <div class="text-2xl font-bold text-gray-400">${fy.year}</div>
+              <div class="text-gray-600 text-xs">${fy.start_date} - ${fy.end_date}</div>
+              <span class="badge badge-danger text-[10px] mt-2 inline-block"><i class="fas fa-lock ml-1"></i> مغلقة</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>` : ''}
+    
+    <!-- Action Buttons -->
+    <div class="flex justify-center gap-4">
+      <button onclick="navigate('/reports/trial-balance')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-6 py-3 rounded-xl text-sm flex items-center gap-2 transition">
+        <i class="fas fa-balance-scale"></i> مراجعة ميزان المراجعة
+      </button>
+      <button onclick="navigate('/reports/income')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-6 py-3 rounded-xl text-sm flex items-center gap-2 transition">
+        <i class="fas fa-chart-line"></i> مراجعة قائمة الدخل
+      </button>
+      ${activeFY && !activeFY.is_closed ? `
+      <button onclick="navigate('/admin/fiscal-years')" class="bg-amber-600 hover:bg-amber-700 text-white px-6 py-3 rounded-xl text-sm flex items-center gap-2 transition">
+        <i class="fas fa-lock"></i> الانتقال لإقفال السنة المالية
+      </button>` : ''}
+    </div>`;
+}
+
+// Print voucher directly
+async function printVoucherDirect(id) {
+  const res = await apiFetch(`/vouchers/${id}`);
+  if (!res.success) { showToast('خطأ', 'error'); return; }
+  const v = res.data;
+  const typeLabel = v.voucher_type === 'receipt' ? 'سند قبض' : 'سند صرف';
+  const html = `
+    <div style="text-align:center; margin-bottom:15px;">
+      <h3 style="font-size:14pt; color:#1e3a5f;">${typeLabel} رقم ${v.voucher_number}</h3>
+    </div>
+    <table style="width:100%; margin-bottom:15px;"><tr>
+      <td style="border:none;padding:5px;"><strong>التاريخ:</strong> ${v.voucher_date}</td>
+      <td style="border:none;padding:5px;"><strong>المبلغ:</strong> ${formatNumber(v.amount)} ${v.currency_symbol || 'د.ع'}</td>
+      <td style="border:none;padding:5px;"><strong>المستفيد:</strong> ${v.beneficiary || '-'}</td>
+    </tr><tr>
+      <td style="border:none;padding:5px;"><strong>الحساب:</strong> ${v.account_code} - ${v.account_name}</td>
+      <td style="border:none;padding:5px;"><strong>الدفع:</strong> ${v.payment_method === 'cash' ? 'نقداً' : v.payment_method === 'check' ? 'شيك' : 'تحويل'}</td>
+      <td style="border:none;padding:5px;"><strong>الحالة:</strong> ${v.status === 'posted' ? 'مرحّل' : 'مسودة'}</td>
+    </tr></table>
+    ${v.description ? `<p style="margin:10px 0;"><strong>البيان:</strong> ${v.description}</p>` : ''}
+    ${v.details && v.details.length > 0 ? `
+    <table>
+      <thead><tr><th>#</th><th>الحساب</th><th>المبلغ</th><th>البيان</th></tr></thead>
+      <tbody>
+        ${v.details.map((d, i) => `<tr>
+          <td>${i + 1}</td><td>${d.account_code || ''} - ${d.account_name || ''}</td>
+          <td style="text-align:left;font-family:monospace;">${formatNumber(d.amount)}</td><td>${d.description || ''}</td>
+        </tr>`).join('')}
+        <tr style="background:#e8f0fe;font-weight:bold;">
+          <td colspan="2">المجموع</td><td style="text-align:left;font-family:monospace;">${formatNumber(v.amount)}</td><td></td>
+        </tr>
+      </tbody>
+    </table>` : ''}`;
+  printReport(typeLabel + ' رقم ' + v.voucher_number, html);
+}
+
+// ╔══════════════════════════════════════════════════╗
 // ║                 INITIALIZATION                    ║
 // ╚══════════════════════════════════════════════════╝
 (function init() {
@@ -3413,6 +3678,13 @@ function exportBalanceSheetExcel() {
   
   // Init notifications
   updateNotifBadge();
+
+  // Load company settings for PDF/Print
+  apiFetch('/admin/settings').then(res => {
+    if (res.success && res.data) {
+      res.data.forEach(s => { companySettings[s.key] = s.value; });
+    }
+  });
 
   buildSidebar().then(() => {
     const path = window.location.pathname.replace('/app', '') || '/dashboard';
