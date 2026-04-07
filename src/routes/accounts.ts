@@ -59,6 +59,9 @@ accountRoutes.post('/', async (c) => {
       await c.env.DB.prepare('UPDATE accounts SET is_parent = 1 WHERE id = ?').bind(parent_id).run()
     }
 
+    // سجل المراجعة
+    await c.env.DB.prepare('INSERT INTO audit_log (action, table_name, record_id, new_data) VALUES (?, ?, ?, ?)').bind('create', 'accounts', result.meta.last_row_id, JSON.stringify({ code, name_ar, account_type })).run()
+
     return c.json({ success: true, message: 'تم إنشاء الحساب بنجاح', id: result.meta.last_row_id })
   } catch (e: any) {
     return c.json({ success: false, message: e.message }, 500)
@@ -77,6 +80,8 @@ accountRoutes.put('/:id', async (c) => {
       is_parent=?, is_active=?, currency_id=?, notes=?, updated_at=CURRENT_TIMESTAMP
       WHERE id=?
     `).bind(code, name_ar, name_en || null, account_type, account_nature, is_parent ? 1 : 0, is_active ? 1 : 0, currency_id || 1, notes || null, id).run()
+
+    await c.env.DB.prepare('INSERT INTO audit_log (action, table_name, record_id, new_data) VALUES (?, ?, ?, ?)').bind('update', 'accounts', id, JSON.stringify({ code, name_ar })).run()
 
     return c.json({ success: true, message: 'تم تعديل الحساب بنجاح' })
   } catch (e: any) {
@@ -99,7 +104,9 @@ accountRoutes.delete('/:id', async (c) => {
       return c.json({ success: false, message: 'لا يمكن حذف حساب له قيود محاسبية' }, 400)
     }
 
+    const acc = await c.env.DB.prepare('SELECT code, name_ar FROM accounts WHERE id = ?').bind(id).first()
     await c.env.DB.prepare('DELETE FROM accounts WHERE id = ?').bind(id).run()
+    await c.env.DB.prepare('INSERT INTO audit_log (action, table_name, record_id, old_data) VALUES (?, ?, ?, ?)').bind('delete', 'accounts', id, JSON.stringify(acc)).run()
     return c.json({ success: true, message: 'تم حذف الحساب بنجاح' })
   } catch (e: any) {
     return c.json({ success: false, message: e.message }, 500)
