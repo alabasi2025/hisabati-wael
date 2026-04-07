@@ -49,10 +49,11 @@ journalRoutes.get('/:id', async (c) => {
     if (!entry) return c.json({ success: false, message: 'القيد غير موجود' }, 404)
 
     const { results: lines } = await c.env.DB.prepare(`
-      SELECT jl.*, a.code as account_code, a.name_ar as account_name, cur.symbol as currency_symbol
+      SELECT jl.*, a.code as account_code, a.name_ar as account_name, cur.symbol as currency_symbol, cc.name_ar as cost_center_name, cc.code as cost_center_code
       FROM journal_entry_lines jl
       JOIN accounts a ON jl.account_id = a.id
       LEFT JOIN currencies cur ON jl.currency_id = cur.id
+      LEFT JOIN cost_centers cc ON jl.cost_center_id = cc.id
       WHERE jl.journal_entry_id = ?
       ORDER BY jl.line_number
     `).bind(id).all()
@@ -107,9 +108,9 @@ journalRoutes.post('/', async (c) => {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
       await c.env.DB.prepare(`
-        INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit, currency_id, exchange_rate)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(entryId, i + 1, line.account_id, line.description || null, parseFloat(line.debit || 0), parseFloat(line.credit || 0), line.currency_id || 1, line.exchange_rate || 1).run()
+        INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit, currency_id, exchange_rate, cost_center_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(entryId, i + 1, line.account_id, line.description || null, parseFloat(line.debit || 0), parseFloat(line.credit || 0), line.currency_id || 1, line.exchange_rate || 1, line.cost_center_id || null).run()
     }
 
     await c.env.DB.prepare('INSERT INTO audit_log (action, table_name, record_id, new_data) VALUES (?, ?, ?, ?)').bind('create', 'journal_entries', entryId, JSON.stringify({ entry_number: entryNumber, description, total: totalDebit })).run()
@@ -157,9 +158,9 @@ journalRoutes.put('/:id', async (c) => {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
       await c.env.DB.prepare(`
-        INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit, currency_id, exchange_rate)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(id, i + 1, line.account_id, line.description || null, parseFloat(line.debit || 0), parseFloat(line.credit || 0), line.currency_id || 1, line.exchange_rate || 1).run()
+        INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit, currency_id, exchange_rate, cost_center_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(id, i + 1, line.account_id, line.description || null, parseFloat(line.debit || 0), parseFloat(line.credit || 0), line.currency_id || 1, line.exchange_rate || 1, line.cost_center_id || null).run()
     }
 
     await c.env.DB.prepare('INSERT INTO audit_log (action, table_name, record_id, new_data) VALUES (?, ?, ?, ?)').bind('update', 'journal_entries', id, JSON.stringify({ description, total: totalDebit })).run()

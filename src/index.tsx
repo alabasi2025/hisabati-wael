@@ -10,7 +10,7 @@ import { adminRoutes } from './routes/admin'
 import { dashboardRoutes } from './routes/dashboard'
 import { costCenterRoutes } from './routes/costcenters'
 import { searchRoutes } from './routes/search'
-import { authMiddleware, requireRole } from './middleware/auth'
+import { authMiddleware, requireRole, checkModulePermission } from './middleware/auth'
 import { mainLayout } from './views/layout'
 import { loginPage } from './views/login'
 
@@ -39,6 +39,13 @@ app.use('/api/dashboard/*', authMiddleware)
 app.use('/api/cost-centers/*', authMiddleware)
 app.use('/api/search/*', authMiddleware)
 app.use('/api/admin/*', authMiddleware)
+
+// ===== Permissions Middleware (module-level access control) =====
+app.use('/api/accounts/*', checkModulePermission('/accounts'))
+app.use('/api/journal/*', checkModulePermission('/journal'))
+app.use('/api/vouchers/*', checkModulePermission('/vouchers/receipt'))
+app.use('/api/cost-centers/*', checkModulePermission('/cost-centers'))
+app.use('/api/reports/*', checkModulePermission('/reports/trial-balance'))
 
 // Admin routes require admin or manager role
 app.use('/api/admin/users/*', requireRole('admin'))

@@ -140,27 +140,130 @@ adminRoutes.post('/fiscal-years/:id/activate', async (c) => {
 adminRoutes.post('/fiscal-years/:id/close', async (c) => {
   try {
     const id = c.req.param('id')
-    const fy = await c.env.DB.prepare('SELECT * FROM fiscal_years WHERE id = ?').bind(id).first()
+    const fy = await c.env.DB.prepare('SELECT * FROM fiscal_years WHERE id = ?').bind(id).first() as any
     if (!fy) return c.json({ success: false, message: 'السنة المالية غير موجودة' }, 404)
     if (fy.is_closed) return c.json({ success: false, message: 'السنة المالية مغلقة بالفعل' }, 400)
 
     // Check for draft entries in this fiscal year
-    const draftCount = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM journal_entries WHERE fiscal_year_id = ? AND status = 'draft'").bind(id).first()
+    const draftCount = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM journal_entries WHERE fiscal_year_id = ? AND status = 'draft'").bind(id).first() as any
     if (draftCount && (draftCount.cnt as number) > 0) {
       return c.json({ success: false, message: `لا يمكن إغلاق السنة، يوجد ${draftCount.cnt} قيد مسودة يجب ترحيله أو حذفه` }, 400)
     }
 
     // Check for draft vouchers
-    const draftVouchers = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM vouchers WHERE fiscal_year_id = ? AND status = 'draft'").bind(id).first()
+    const draftVouchers = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM vouchers WHERE fiscal_year_id = ? AND status = 'draft'").bind(id).first() as any
     if (draftVouchers && (draftVouchers.cnt as number) > 0) {
       return c.json({ success: false, message: `لا يمكن إغلاق السنة، يوجد ${draftVouchers.cnt} سند مسودة يجب ترحيله أو حذفه` }, 400)
     }
 
+    // === إغلاق السنة مع ترحيل الأرصدة ===
+    
+    // 1. حساب أرصدة الإيرادات والمصروفات
+    const { results: revExpAccounts } = await c.env.DB.prepare(`
+      SELECT a.id, a.code, a.name_ar, a.account_type, a.account_nature,
+        a.opening_balance + COALESCE(SUM(jl.debit - jl.credit), 0) as final_balance
+      FROM accounts a
+      LEFT JOIN journal_entry_lines jl ON jl.account_id = a.id
+      LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id AND je.status = 'posted' AND je.fiscal_year_id = ?
+      WHERE a.account_type IN ('revenue', 'expense') AND a.is_parent = 0
+      GROUP BY a.id
+      HAVING final_balance != 0
+    `).bind(id).all() as any[]
+
+    // 2. حساب صافي الربح/الخسارة
+    let totalRevenue = 0, totalExpenses = 0
+    revExpAccounts.forEach((a: any) => {
+      if (a.account_type === 'revenue') totalRevenue += Math.abs(a.final_balance)
+      else totalExpenses += Math.abs(a.final_balance)
+    })
+    const netIncome = totalRevenue - totalExpenses
+
+    // 3. إنشاء قيد إغلاق إذا يوجد أرصدة إيرادات/مصروفات
+    if (revExpAccounts.length > 0) {
+      const last = await c.env.DB.prepare(
+        'SELECT MAX(entry_number) as max_num FROM journal_entries WHERE fiscal_year_id = ?'
+      ).bind(id).first() as any
+      const entryNumber = (last?.max_num || 0) + 1
+
+      const jeResult = await c.env.DB.prepare(`
+        INSERT INTO journal_entries (entry_number, entry_date, fiscal_year_id, description, reference, entry_type, total_debit, total_credit, status, posted_at)
+        VALUES (?, ?, ?, ?, 'CLOSE', 'closing', ?, ?, 'posted', CURRENT_TIMESTAMP)
+      `).bind(
+        entryNumber, fy.end_date, id,
+        `قيد إغلاق السنة المالية ${fy.year} - ترحيل الإيرادات والمصروفات`,
+        revExpAccounts.reduce((s: number, a: any) => s + Math.abs(a.final_balance), 0),
+        revExpAccounts.reduce((s: number, a: any) => s + Math.abs(a.final_balance), 0)
+      ).run()
+
+      const jeId = jeResult.meta.last_row_id
+      let lineNum = 1
+
+      // إقفال حسابات الإيرادات (عكس أرصدتها)
+      for (const acc of revExpAccounts) {
+        const debit = acc.final_balance < 0 ? Math.abs(acc.final_balance) : 0
+        const credit = acc.final_balance > 0 ? acc.final_balance : 0
+        // عكس الرصيد: الإيرادات (دائنة) تصبح مدينة، المصروفات (مدينة) تصبح دائنة
+        const closeDebit = acc.account_type === 'revenue' ? Math.abs(acc.final_balance) : 0
+        const closeCredit = acc.account_type === 'expense' ? Math.abs(acc.final_balance) : 0
+        
+        await c.env.DB.prepare(`
+          INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(jeId, lineNum++, acc.id, `إقفال ${acc.account_type === 'revenue' ? 'إيرادات' : 'مصروفات'} - ${acc.name_ar}`, closeDebit, closeCredit).run()
+
+        // تصفير رصيد الحساب
+        await c.env.DB.prepare('UPDATE accounts SET current_balance = 0 WHERE id = ?').bind(acc.id).run()
+      }
+
+      // ترحيل صافي الربح/الخسارة إلى حساب الأرباح المحتجزة (إن وجد)
+      const retainedEarnings = await c.env.DB.prepare(
+        "SELECT id FROM accounts WHERE (code LIKE '%33%' OR code LIKE '%321%' OR name_ar LIKE '%أرباح محتجزة%' OR name_ar LIKE '%أرباح مرحلة%') AND is_parent = 0 LIMIT 1"
+      ).first() as any
+
+      if (retainedEarnings && netIncome !== 0) {
+        await c.env.DB.prepare(`
+          INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(
+          jeId, lineNum, retainedEarnings.id,
+          netIncome > 0 ? `ترحيل صافي ربح ${fy.year}` : `ترحيل صافي خسارة ${fy.year}`,
+          netIncome < 0 ? Math.abs(netIncome) : 0,
+          netIncome > 0 ? netIncome : 0
+        ).run()
+
+        // تحديث رصيد حساب الأرباح المحتجزة
+        await c.env.DB.prepare('UPDATE accounts SET current_balance = current_balance + ? WHERE id = ?')
+          .bind(netIncome > 0 ? -netIncome : Math.abs(netIncome), retainedEarnings.id).run()
+      }
+    }
+
+    // 4. تحديث الأرصدة الافتتاحية لحسابات الأصول والخصوم وحقوق الملكية
+    const { results: bsAccounts } = await c.env.DB.prepare(`
+      SELECT id, current_balance FROM accounts 
+      WHERE account_type IN ('asset', 'liability', 'equity') AND is_parent = 0
+    `).all() as any[]
+
+    for (const acc of bsAccounts) {
+      await c.env.DB.prepare('UPDATE accounts SET opening_balance = ? WHERE id = ?')
+        .bind(acc.current_balance, acc.id).run()
+    }
+
+    // 5. إغلاق السنة المالية
     await c.env.DB.prepare('UPDATE fiscal_years SET is_closed = 1, is_active = 0 WHERE id = ?').bind(id).run()
 
-    await c.env.DB.prepare('INSERT INTO audit_log (action, table_name, record_id, new_data) VALUES (?, ?, ?, ?)').bind('close', 'fiscal_years', id, JSON.stringify({ year: fy.year })).run()
+    await c.env.DB.prepare('INSERT INTO audit_log (action, table_name, record_id, new_data) VALUES (?, ?, ?, ?)').bind('close', 'fiscal_years', id, JSON.stringify({ year: fy.year, netIncome, accountsClosed: revExpAccounts.length })).run()
 
-    return c.json({ success: true, message: `تم إغلاق السنة المالية ${fy.year} بنجاح` })
+    return c.json({ 
+      success: true, 
+      message: `تم إغلاق السنة المالية ${fy.year} بنجاح وترحيل الأرصدة`,
+      data: {
+        totalRevenue,
+        totalExpenses,
+        netIncome,
+        accountsClosed: revExpAccounts.length,
+        balancesCarriedForward: bsAccounts.length
+      }
+    })
   } catch (e: any) { return c.json({ success: false, message: e.message }, 500) }
 })
 

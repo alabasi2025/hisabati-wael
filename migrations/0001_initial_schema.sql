@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS vouchers (
   status TEXT DEFAULT 'draft' CHECK(status IN ('draft','approved','posted','cancelled')),
   created_by INTEGER,
   approved_by INTEGER,
+  cost_center_id INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (fiscal_year_id) REFERENCES fiscal_years(id),
@@ -172,7 +173,8 @@ CREATE TABLE IF NOT EXISTS vouchers (
   FOREIGN KEY (currency_id) REFERENCES currencies(id),
   FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id),
   FOREIGN KEY (created_by) REFERENCES users(id),
-  FOREIGN KEY (approved_by) REFERENCES users(id)
+  FOREIGN KEY (approved_by) REFERENCES users(id),
+  FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id)
 );
 
 -- 11. تفاصيل السندات (SNDKF/SNDSF)
@@ -231,6 +233,8 @@ CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(voucher_date);
 CREATE INDEX IF NOT EXISTS idx_vouchers_account ON vouchers(account_id);
 CREATE INDEX IF NOT EXISTS idx_vouchers_status ON vouchers(status);
 CREATE INDEX IF NOT EXISTS idx_voucher_details_voucher ON voucher_details(voucher_id);
+CREATE INDEX IF NOT EXISTS idx_vouchers_cost_center ON vouchers(cost_center_id);
+CREATE INDEX IF NOT EXISTS idx_journal_entry_lines_cost_center ON journal_entry_lines(cost_center_id);
 CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
 CREATE INDEX IF NOT EXISTS idx_modules_parent ON modules(parent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);

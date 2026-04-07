@@ -9,6 +9,7 @@ let currentUser = null;
 let menuItems = [];
 let accountsCache = [];
 let currenciesCache = [];
+let costCentersCache = [];
 let notifications = JSON.parse(localStorage.getItem('notifications') || '[]');
 
 // ===== Auth =====
@@ -404,6 +405,7 @@ function loadPage(path) {
   else if (path === '/admin/fiscal-years') renderFiscalYears(el);
   else if (path === '/admin/audit-log') renderAuditLog(el);
   else if (path === '/cost-centers') renderCostCenters(el);
+  else if (path === '/cost-centers/report') renderCostCenterReport(el);
   else el.innerHTML = '<div class="text-center text-gray-500 py-20"><i class="fas fa-hard-hat text-6xl mb-4 block"></i><p class="text-xl">الصفحة قيد الإنشاء</p></div>';
 }
 
@@ -1171,7 +1173,8 @@ function journalRow(e) {
         <button onclick="deleteJournalEntry(${e.id})" class="text-red-400 hover:text-red-300 p-1 mx-0.5" title="حذف"><i class="fas fa-trash"></i></button>
       `:`<button onclick="viewJournalEntry(${e.id})" class="text-primary-400 hover:text-primary-300 p-1 mx-0.5" title="عرض"><i class="fas fa-eye"></i></button>
          <button onclick="copyJournalEntry(${e.id})" class="text-cyan-400 hover:text-cyan-300 p-1 mx-0.5" title="نسخ"><i class="fas fa-copy"></i></button>
-         <button onclick="reverseJournalEntry(${e.id})" class="text-yellow-400 hover:text-yellow-300 p-1 mx-0.5" title="عكس"><i class="fas fa-undo"></i></button>`}
+         <button onclick="reverseJournalEntry(${e.id})" class="text-yellow-400 hover:text-yellow-300 p-1 mx-0.5" title="عكس"><i class="fas fa-undo"></i></button>
+         <button onclick="exportJournalEntryPDF(${e.id})" class="text-red-400 hover:text-red-300 p-1 mx-0.5" title="PDF"><i class="fas fa-file-pdf"></i></button>`}
     </td></tr>`;
 }
 
@@ -1207,6 +1210,13 @@ async function showJournalModal(entryId = null, prefillData = null) {
   }
   window._jeCurrOptions = currenciesCache.map(c => `<option value="${c.id}" data-rate="${c.exchange_rate}" ${c.is_default ? 'selected' : ''}>${c.code} - ${c.name_ar}</option>`).join('');
 
+  // Load cost centers
+  if (costCentersCache.length === 0) {
+    const ccRes = await apiFetch('/cost-centers');
+    if (ccRes.success) costCentersCache = ccRes.data || [];
+  }
+  window._jeCcOptions = costCentersCache.filter(c => c.is_active).map(c => `<option value="${c.id}">${c.code} - ${c.name_ar}</option>`).join('');
+
   const title = entryId ? `تعديل القيد #${prefillData?.entry_number || ''}` : 'قيد محاسبي جديد';
   showModal(title, `
     <div class="space-y-4">
@@ -1235,8 +1245,8 @@ async function showJournalModal(entryId = null, prefillData = null) {
         </div>
         <div class="bg-dark-900 rounded-xl p-3">
           <div class="grid grid-cols-12 gap-2 mb-2 text-[10px] text-gray-500 uppercase font-medium">
-            <span class="col-span-5">الحساب</span><span class="col-span-2 text-center">مدين</span>
-            <span class="col-span-2 text-center">دائن</span><span class="col-span-2">بيان</span><span class="col-span-1"></span>
+            <span class="col-span-4">الحساب</span><span class="col-span-2 text-center">مدين</span>
+            <span class="col-span-2 text-center">دائن</span><span class="col-span-2">بيان</span><span class="col-span-1">مركز</span><span class="col-span-1"></span>
           </div>
           <div id="journalLines" class="space-y-2"></div>
         </div>
@@ -1262,6 +1272,7 @@ async function showJournalModal(entryId = null, prefillData = null) {
       lastLine.querySelector('.je-debit').value = l.debit > 0 ? l.debit : '';
       lastLine.querySelector('.je-credit').value = l.credit > 0 ? l.credit : '';
       lastLine.querySelector('.je-line-desc').value = l.description || '';
+      if (l.cost_center_id && lastLine.querySelector('.je-cc')) lastLine.querySelector('.je-cc').value = l.cost_center_id;
     });
     calcJournalTotals();
   } else { addJournalLine(); addJournalLine(); }
@@ -1294,10 +1305,11 @@ function addJournalLine() {
   const div = document.createElement('div');
   div.className = 'grid grid-cols-12 gap-2 items-center journal-line';
   div.innerHTML = `
-    <select class="je-account col-span-5 bg-dark-800 border border-dark-600 rounded-lg px-2 py-2 text-gray-200 text-xs outline-none focus:border-primary-500"><option value="">اختر الحساب</option>${window._jeAccOptions}</select>
+    <select class="je-account col-span-4 bg-dark-800 border border-dark-600 rounded-lg px-2 py-2 text-gray-200 text-xs outline-none focus:border-primary-500"><option value="">اختر الحساب</option>${window._jeAccOptions}</select>
     <input type="number" class="je-debit col-span-2 bg-dark-800 border border-dark-600 rounded-lg px-2 py-2 text-gray-200 text-xs outline-none focus:border-primary-500 text-left" placeholder="0" oninput="if(this.value>0)this.closest('.journal-line').querySelector('.je-credit').value='';calcJournalTotals()" min="0" step="0.01">
     <input type="number" class="je-credit col-span-2 bg-dark-800 border border-dark-600 rounded-lg px-2 py-2 text-gray-200 text-xs outline-none focus:border-primary-500 text-left" placeholder="0" oninput="if(this.value>0)this.closest('.journal-line').querySelector('.je-debit').value='';calcJournalTotals()" min="0" step="0.01">
     <input type="text" class="je-line-desc col-span-2 bg-dark-800 border border-dark-600 rounded-lg px-2 py-2 text-gray-200 text-xs outline-none" placeholder="بيان">
+    <select class="je-cc col-span-1 bg-dark-800 border border-dark-600 rounded-lg px-1 py-2 text-gray-200 text-[10px] outline-none focus:border-primary-500"><option value="">-</option>${window._jeCcOptions || ''}</select>
     <button onclick="this.closest('.journal-line').remove();calcJournalTotals()" class="col-span-1 text-red-400 hover:text-red-300 text-center"><i class="fas fa-times-circle"></i></button>`;
   container.appendChild(div);
 }
@@ -1331,7 +1343,7 @@ async function saveJournalEntry() {
     const debit = parseFloat(row.querySelector('.je-debit').value || 0);
     const credit = parseFloat(row.querySelector('.je-credit').value || 0);
     const desc = row.querySelector('.je-line-desc').value;
-    if (acc && (debit > 0 || credit > 0)) lines.push({ account_id: parseInt(acc), debit, credit, description: desc, currency_id: currencyId, exchange_rate: exchangeRate });
+    if (acc && (debit > 0 || credit > 0)) lines.push({ account_id: parseInt(acc), debit, credit, description: desc, currency_id: currencyId, exchange_rate: exchangeRate, cost_center_id: parseInt(row.querySelector('.je-cc')?.value) || null });
   });
   const entryId = document.getElementById('jeEntryId')?.value;
   const data = { entry_date: document.getElementById('jeDate').value, description: document.getElementById('jeDesc').value, reference: document.getElementById('jeRef').value, lines, created_by: getUser()?.id, currency_id: currencyId, exchange_rate: exchangeRate };
@@ -1359,17 +1371,18 @@ async function viewJournalEntry(id) {
       ${e.description ? `<div class="bg-dark-900 rounded-xl p-3"><span class="text-gray-500 text-xs">الوصف:</span><p class="text-white mt-1">${e.description}</p></div>` : ''}
       <table class="w-full text-sm"><thead><tr class="bg-dark-900 text-gray-400 text-xs">
         <th class="px-3 py-2.5 text-right w-8">#</th><th class="px-3 py-2.5 text-right">الحساب</th>
-        <th class="px-3 py-2.5 text-right">البيان</th><th class="px-3 py-2.5 text-left">مدين</th><th class="px-3 py-2.5 text-left">دائن</th>
+        <th class="px-3 py-2.5 text-right">البيان</th><th class="px-3 py-2.5 text-right">مركز التكلفة</th><th class="px-3 py-2.5 text-left">مدين</th><th class="px-3 py-2.5 text-left">دائن</th>
       </tr></thead><tbody>${e.lines.map((l,i) => `
         <tr class="border-b border-dark-700/50">
           <td class="px-3 py-2.5 text-gray-500 text-xs">${i+1}</td>
           <td class="px-3 py-2.5"><span class="text-primary-400 font-mono text-xs">${l.account_code}</span> <span class="text-gray-300">${l.account_name}</span></td>
           <td class="px-3 py-2.5 text-gray-400 text-xs">${l.description||''}</td>
+          <td class="px-3 py-2.5 text-gray-400 text-xs">${l.cost_center_name ? `<span class="text-orange-400">${l.cost_center_code}</span> ${l.cost_center_name}` : '-'}</td>
           <td class="px-3 py-2.5 text-left font-mono ${l.debit>0?'text-green-400':'text-gray-600'}">${l.debit>0?formatNumber(l.debit):''}</td>
           <td class="px-3 py-2.5 text-left font-mono ${l.credit>0?'text-red-400':'text-gray-600'}">${l.credit>0?formatNumber(l.credit):''}</td>
         </tr>`).join('')}
         <tr class="bg-primary-900/20 font-bold text-white">
-          <td class="px-3 py-3" colspan="3">المجموع</td>
+          <td class="px-3 py-3" colspan="4">المجموع</td>
           <td class="px-3 py-3 text-left font-mono text-green-400">${formatNumber(e.total_debit)}</td>
           <td class="px-3 py-3 text-left font-mono text-red-400">${formatNumber(e.total_credit)}</td>
         </tr></tbody></table>
@@ -1532,8 +1545,10 @@ async function renderVouchers(el, type) {
   el.innerHTML = `
     <div class="flex items-center justify-between mb-6">
       <div><h2 class="text-2xl font-bold text-white"><i class="fas ${typeIcon} ml-2 text-${typeColor}-400"></i>سندات ${typeLabel}</h2><p class="text-gray-500 text-sm mt-1">${res.total} سند</p></div>
-      <button onclick="showAddVoucherModal('${type}')" class="bg-${typeColor}-600 hover:bg-${typeColor}-700 text-white px-4 py-2.5 rounded-xl text-sm flex items-center gap-2 transition"><i class="fas fa-plus"></i> سند ${typeLabel === 'القبض' ? 'قبض' : 'صرف'} جديد</button>
-    </div>
+      <div class="flex gap-2">
+        <button onclick="showAddVoucherModal('${type}')" class="bg-${typeColor}-600 hover:bg-${typeColor}-700 text-white px-4 py-2.5 rounded-xl text-sm flex items-center gap-2 transition"><i class="fas fa-plus"></i> سند ${typeLabel === 'القبض' ? 'قبض' : 'صرف'} جديد</button>
+        <button onclick="showVoucherTemplates('${type}')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-4 py-2.5 rounded-xl text-sm flex items-center gap-2 transition"><i class="fas fa-file-code"></i> قوالب</button>
+      </div>
     <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 mb-4">
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div class="relative"><i class="fas fa-search absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
@@ -1561,8 +1576,12 @@ async function renderVouchers(el, type) {
               ${v.status==='draft'?`
                 <button onclick="postVoucher(${v.id})" class="text-green-400 hover:text-green-300 p-1" title="ترحيل"><i class="fas fa-check-circle"></i></button>
                 <button onclick="showEditVoucherModal(${v.id},'${type}')" class="text-primary-400 hover:text-primary-300 p-1" title="تعديل"><i class="fas fa-edit"></i></button>
+                <button onclick="copyVoucher(${v.id},'${type}')" class="text-cyan-400 hover:text-cyan-300 p-1" title="نسخ"><i class="fas fa-copy"></i></button>
                 <button onclick="deleteVoucher(${v.id},'${type}')" class="text-red-400 hover:text-red-300 p-1" title="حذف"><i class="fas fa-trash"></i></button>
-              `:`<button onclick="printVoucher(${v.id})" class="text-gray-400 hover:text-gray-300 p-1" title="طباعة"><i class="fas fa-print"></i></button>`}
+              `:`<button onclick="viewVoucher(${v.id})" class="text-primary-400 hover:text-primary-300 p-1" title="عرض"><i class="fas fa-eye"></i></button>
+                 <button onclick="copyVoucher(${v.id},'${type}')" class="text-cyan-400 hover:text-cyan-300 p-1" title="نسخ"><i class="fas fa-copy"></i></button>
+                 <button onclick="reverseVoucher(${v.id},'${type}')" class="text-yellow-400 hover:text-yellow-300 p-1" title="عكس"><i class="fas fa-undo"></i></button>
+                 <button onclick="exportVoucherPDF(${v.id})" class="text-red-400 hover:text-red-300 p-1" title="PDF"><i class="fas fa-file-pdf"></i></button>`}
             </td></tr>`).join('')}</tbody></table>
       </div>
       ${res.data.length === 0 ? emptyState('لا توجد سندات بعد', typeIcon) : ''}
@@ -1583,6 +1602,14 @@ async function showVoucherForm(type, editData = null) {
   const accRes = await apiFetch('/accounts/leaf/all');
   const accounts = accRes.success ? accRes.data : [];
   window._vAccOptions = accounts.map(a => `<option value="${a.id}">${a.code} - ${a.name_ar}</option>`).join('');
+  
+  // Load cost centers
+  if (costCentersCache.length === 0) {
+    const ccRes = await apiFetch('/cost-centers');
+    if (ccRes.success) costCentersCache = ccRes.data || [];
+  }
+  const ccOpts = costCentersCache.filter(c => c.is_active).map(c => ({value: c.id, text: `${c.code} - ${c.name_ar}`}));
+
   const label = type === 'receipt' ? 'قبض' : 'صرف';
   const isEdit = !!editData;
   const title = isEdit ? `تعديل سند ${label} #${editData.voucher_number}` : `سند ${label} جديد`;
@@ -1600,7 +1627,10 @@ async function showVoucherForm(type, editData = null) {
         ${inputField('vBeneficiary', 'المستفيد / الجهة', 'text', editData?.beneficiary || '')}
         ${selectField('vPayment', 'طريقة الدفع', [{value:'cash',text:'نقداً'},{value:'check',text:'شيك'},{value:'transfer',text:'تحويل بنكي'}], editData?.payment_method || 'cash')}
       </div>
-      ${inputField('vDesc', 'الوصف / البيان', 'text', editData?.description || '')}
+      <div class="grid grid-cols-2 gap-4">
+        ${inputField('vDesc', 'الوصف / البيان', 'text', editData?.description || '')}
+        ${selectField('vCostCenter', 'مركز التكلفة', [{value:'',text:'-- بدون مركز --'}, ...ccOpts], editData?.cost_center_id || '')}
+      </div>
       <div id="checkDetails" class="${editData?.payment_method === 'check' ? '' : 'hidden'} grid grid-cols-3 gap-3">
         ${inputField('vCheckNum', 'رقم الشيك', 'text', editData?.check_number || '')}
         ${inputField('vCheckDate', 'تاريخ الشيك', 'date', editData?.check_date || '')}
@@ -1673,7 +1703,8 @@ async function saveVoucher(type) {
     account_id: parseInt(accountId), amount, description: document.getElementById('vDesc').value,
     beneficiary: document.getElementById('vBeneficiary').value, payment_method: document.getElementById('vPayment').value,
     check_number: document.getElementById('vCheckNum')?.value || null, check_date: document.getElementById('vCheckDate')?.value || null,
-    bank_name: document.getElementById('vBankName')?.value || null, details, created_by: getUser()?.id
+    bank_name: document.getElementById('vBankName')?.value || null, details, created_by: getUser()?.id,
+    cost_center_id: parseInt(document.getElementById('vCostCenter')?.value) || null
   };
 
   let res;
@@ -1718,7 +1749,89 @@ async function viewVoucher(id) {
      <button onclick="closeModal()" class="px-5 py-2.5 rounded-xl bg-primary-600 text-white text-sm">إغلاق</button>`, 'max-w-2xl');
 }
 
-function printVoucher(id) { window.print(); }
+function printVoucher(id) { viewVoucher(id); setTimeout(() => window.print(), 500); }
+
+async function copyVoucher(id, type) {
+  const res = await apiFetch(`/vouchers/${id}`);
+  if (!res.success) { showToast('خطأ في جلب بيانات السند', 'error'); return; }
+  const v = res.data;
+  const copyData = {
+    voucher_date: todayStr(),
+    account_id: v.account_id,
+    amount: v.amount,
+    description: 'نسخة من سند #' + v.voucher_number + ' - ' + (v.description || ''),
+    beneficiary: v.beneficiary,
+    payment_method: v.payment_method,
+    check_number: '',
+    check_date: '',
+    bank_name: v.bank_name,
+    details: v.details || []
+  };
+  await showVoucherForm(type, copyData);
+  showToast('تم نسخ السند - عدّل وأحفظ', 'info');
+}
+
+async function reverseVoucher(id, type) {
+  const res = await apiFetch(`/vouchers/${id}`);
+  if (!res.success) { showToast('خطأ في جلب البيانات', 'error'); return; }
+  const v = res.data;
+  const reverseType = type === 'receipt' ? 'payment' : 'receipt';
+  const typeLabel = reverseType === 'receipt' ? 'قبض' : 'صرف';
+  showConfirm('عكس السند', `سيتم إنشاء سند ${typeLabel} عكسي للسند #${v.voucher_number}. هل تريد المتابعة؟`, async () => {
+    const reverseData = {
+      voucher_type: reverseType,
+      voucher_date: todayStr(),
+      account_id: v.account_id,
+      amount: v.amount,
+      description: 'عكس سند ' + (type === 'receipt' ? 'قبض' : 'صرف') + ' رقم ' + v.voucher_number,
+      beneficiary: v.beneficiary,
+      payment_method: v.payment_method,
+      details: v.details || [],
+      created_by: getUser()?.id
+    };
+    const saveRes = await apiFetch('/vouchers', { method: 'POST', body: JSON.stringify(reverseData) });
+    if (saveRes.success) {
+      showToast('تم إنشاء السند العكسي بنجاح');
+      addNotification('سند عكسي', `تم عكس السند رقم ${v.voucher_number}`, 'info');
+      navigate(`/vouchers/${reverseType}`);
+    } else {
+      showToast(saveRes.message, 'error');
+    }
+  });
+}
+
+// قوالب السندات
+const voucherTemplates = [
+  { name: 'إيداع نقدي', icon: 'fa-piggy-bank', type: 'receipt', data: { description: 'إيداع نقدي', payment_method: 'cash' } },
+  { name: 'تحصيل شيك', icon: 'fa-money-check', type: 'receipt', data: { description: 'تحصيل شيك', payment_method: 'check' } },
+  { name: 'تحويل بنكي وارد', icon: 'fa-university', type: 'receipt', data: { description: 'تحويل بنكي وارد', payment_method: 'transfer' } },
+  { name: 'صرف رواتب', icon: 'fa-users', type: 'payment', data: { description: 'صرف رواتب الموظفين', payment_method: 'transfer' } },
+  { name: 'دفع فاتورة', icon: 'fa-file-invoice', type: 'payment', data: { description: 'دفع فاتورة', payment_method: 'cash' } },
+  { name: 'سحب نقدي', icon: 'fa-hand-holding-usd', type: 'payment', data: { description: 'سحب نقدي', payment_method: 'cash' } },
+];
+
+function showVoucherTemplates(type) {
+  const filtered = voucherTemplates.filter(t => t.type === type);
+  const content = `
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      ${filtered.map((t, i) => `
+        <button onclick="closeModal();applyVoucherTemplate('${type}', ${JSON.stringify(t.data).replace(/"/g, '&quot;')})" class="text-right p-4 bg-dark-900 rounded-xl border border-dark-700 hover:border-primary-500/50 hover:bg-dark-800 transition group">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-primary-500/10 flex items-center justify-center group-hover:bg-primary-500/20 transition">
+              <i class="fas ${t.icon} text-primary-400"></i>
+            </div>
+            <div><h4 class="text-white font-bold text-sm">${t.name}</h4><p class="text-gray-500 text-xs">${t.data.description}</p></div>
+          </div>
+        </button>
+      `).join('')}
+    </div>`;
+  showModal('قوالب السندات الجاهزة', content, '', 'max-w-2xl');
+}
+
+async function applyVoucherTemplate(type, data) {
+  await showVoucherForm(type, { ...data, voucher_date: todayStr() });
+  showToast(`تم تحميل القالب - أكمل البيانات`, 'info');
+}
 
 async function postVoucher(id) {
   showConfirm('ترحيل السند', 'سيتم ترحيل السند وإنشاء قيد محاسبي تلقائي.', async () => {
@@ -1744,6 +1857,7 @@ async function renderTrialBalance(el) {
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-bold text-white"><i class="fas fa-balance-scale ml-2 text-purple-400"></i>ميزان المراجعة</h2>
       <div class="flex gap-2">
+        <button onclick="exportTrialBalancePDF()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-pdf ml-1 text-red-400"></i> PDF</button>
         <button onclick="exportTableExcel('trialBalanceTable','ميزان_المراجعة','ميزان المراجعة')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-excel ml-1 text-green-400"></i> Excel</button>
         <button onclick="exportTableCSV('trialBalanceTable','ميزان_المراجعة')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-csv ml-1"></i> CSV</button>
         <button onclick="printTrialBalance()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button>
@@ -1812,6 +1926,7 @@ async function renderAccountStatement(el) {
           <button onclick="loadAccountStatement()" class="bg-primary-600 hover:bg-primary-700 text-white px-6 py-2.5 rounded-xl text-sm flex-1 transition">عرض</button>
           <button onclick="exportTableExcel('stmtTable','كشف_حساب','كشف حساب')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2.5 rounded-xl text-sm" title="Excel"><i class="fas fa-file-excel text-green-400"></i></button>
           <button onclick="exportTableCSV('stmtTable','كشف_حساب')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2.5 rounded-xl text-sm" title="CSV"><i class="fas fa-file-csv"></i></button>
+          <button onclick="exportAccountStatementPDF()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2.5 rounded-xl text-sm" title="PDF"><i class="fas fa-file-pdf text-red-400"></i></button>
         </div>
       </div>
     </div><div id="stmtResult"></div>`;
@@ -1868,6 +1983,7 @@ async function renderIncomeStatement(el) {
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-bold text-white"><i class="fas fa-chart-line ml-2 text-green-400"></i>قائمة الدخل</h2>
       <div class="flex gap-2">
+        <button onclick="exportIncomeStatementPDF()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-pdf ml-1 text-red-400"></i> PDF</button>
         <button onclick="exportTableExcel('incomeTable','قائمة_الدخل','قائمة الدخل')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-excel ml-1 text-green-400"></i> Excel</button>
         <button onclick="exportTableCSV('incomeTable','قائمة_الدخل')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-csv"></i></button>
         <button onclick="printIncomeStatement()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button>
@@ -1925,7 +2041,7 @@ async function renderBalanceSheet(el) {
   el.innerHTML = `
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-bold text-white"><i class="fas fa-file-alt ml-2 text-blue-400"></i>الميزانية العمومية</h2>
-      <div class="flex gap-2"><button onclick="exportBalanceSheetExcel()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-excel ml-1 text-green-400"></i> Excel</button><button onclick="exportBalanceSheetCSV()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-csv ml-1"></i> CSV</button><button onclick="printBalanceSheet()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button></div>
+      <div class="flex gap-2"><button onclick="exportBalanceSheetPDF()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-pdf ml-1 text-red-400"></i> PDF</button><button onclick="exportBalanceSheetExcel()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-excel ml-1 text-green-400"></i> Excel</button><button onclick="exportBalanceSheetCSV()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-csv ml-1"></i> CSV</button><button onclick="printBalanceSheet()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button></div>
     </div>
     <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 mb-4">
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1983,6 +2099,8 @@ async function loadBalanceSheet() {
 // ╔══════════════════════════════════════════════════╗
 // ║           COST CENTERS (مراكز التكلفة)             ║
 // ╚══════════════════════════════════════════════════╝
+let ccViewMode = 'list'; // 'list' or 'report'
+
 async function renderCostCenters(el) {
   const res = await apiFetch('/cost-centers');
   if (!res.success) { el.innerHTML = '<p class="text-red-400">خطأ</p>'; return; }
@@ -1990,23 +2108,144 @@ async function renderCostCenters(el) {
   el.innerHTML = `
     <div class="flex items-center justify-between mb-6">
       <div><h2 class="text-2xl font-bold text-white"><i class="fas fa-bullseye ml-2 text-orange-400"></i>مراكز التكلفة</h2><p class="text-gray-500 text-sm mt-1">${centers.length} مركز</p></div>
-      <button onclick="showAddCostCenterModal()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2.5 rounded-xl text-sm transition"><i class="fas fa-plus ml-1"></i> مركز تكلفة جديد</button>
+      <div class="flex gap-2">
+        <button onclick="ccViewMode='report';renderCostCenterReport(document.getElementById('mainContent'))" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-4 py-2.5 rounded-xl text-sm flex items-center gap-2 transition"><i class="fas fa-chart-bar"></i> تقرير الأرصدة</button>
+        <button onclick="showAddCostCenterModal()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2.5 rounded-xl text-sm transition"><i class="fas fa-plus ml-1"></i> مركز تكلفة جديد</button>
+      </div>
+    </div>
+    <!-- بطاقات إحصائية -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 p-5 text-center">
+        <div class="text-3xl font-bold text-orange-400 mb-1">${centers.length}</div>
+        <div class="text-gray-500 text-sm">إجمالي المراكز</div>
+      </div>
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 p-5 text-center">
+        <div class="text-3xl font-bold text-green-400 mb-1">${centers.filter(c => c.is_active).length}</div>
+        <div class="text-gray-500 text-sm">مراكز نشطة</div>
+      </div>
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 p-5 text-center">
+        <div class="text-3xl font-bold text-red-400 mb-1">${centers.filter(c => !c.is_active).length}</div>
+        <div class="text-gray-500 text-sm">مراكز معطلة</div>
+      </div>
     </div>
     <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
       ${centers.length === 0 ? emptyState('لا توجد مراكز تكلفة بعد', 'fa-bullseye') : `
       <table class="w-full text-sm"><thead><tr class="bg-dark-900 text-gray-400 text-xs uppercase">
         <th class="px-4 py-3 text-right">الرمز</th><th class="px-4 py-3 text-right">اسم المركز</th><th class="px-4 py-3 text-right">الاسم الإنجليزي</th>
         <th class="px-4 py-3 text-center">الحالة</th><th class="px-4 py-3 text-center">إجراءات</th>
-      </tr></thead><tbody>${centers.map(cc => `<tr class="table-row border-b border-dark-700/50">
+      </tr></thead><tbody>${centers.map(cc => `<tr class="table-row border-b border-dark-700/50 cursor-pointer" onclick="showCostCenterTransactions(${cc.id})">
         <td class="px-4 py-3 font-mono text-primary-400 text-sm">${cc.code}</td>
         <td class="px-4 py-3 text-gray-200">${cc.name_ar}</td>
         <td class="px-4 py-3 text-gray-400 text-sm">${cc.name_en || '-'}</td>
         <td class="px-4 py-3 text-center"><span class="badge ${cc.is_active?'badge-success':'badge-danger'}">${cc.is_active?'نشط':'معطل'}</span></td>
-        <td class="px-4 py-3 text-center">
+        <td class="px-4 py-3 text-center" onclick="event.stopPropagation()">
+          <button onclick="showCostCenterTransactions(${cc.id})" class="text-yellow-400 hover:text-yellow-300 p-1" title="عرض الحركات"><i class="fas fa-list text-xs"></i></button>
           <button onclick="showEditCostCenterModal(${cc.id},'${cc.code}','${cc.name_ar}','${cc.name_en||''}',${cc.is_active})" class="text-primary-400 hover:text-primary-300 p-1"><i class="fas fa-edit text-xs"></i></button>
           <button onclick="deleteCostCenter(${cc.id})" class="text-red-400 hover:text-red-300 p-1"><i class="fas fa-trash text-xs"></i></button>
         </td></tr>`).join('')}</tbody></table>`}
     </div>`;
+}
+
+// تقرير أرصدة مراكز التكلفة
+async function renderCostCenterReport(el) {
+  el.innerHTML = '<div class="text-center py-10"><i class="fas fa-spinner fa-spin text-2xl text-primary-500"></i></div>';
+  const res = await apiFetch('/cost-centers/report');
+  if (!res.success) { el.innerHTML = '<p class="text-red-400">خطأ</p>'; return; }
+  const data = res.data;
+  const totalDebit = data.reduce((s, c) => s + (c.total_debit || 0), 0);
+  const totalCredit = data.reduce((s, c) => s + (c.total_credit || 0), 0);
+  
+  el.innerHTML = `
+    <div class="flex items-center justify-between mb-6">
+      <div><h2 class="text-2xl font-bold text-white"><i class="fas fa-chart-bar ml-2 text-orange-400"></i>تقرير أرصدة مراكز التكلفة</h2></div>
+      <div class="flex gap-2">
+        <button onclick="exportTableExcel('ccReportTable','تقرير_مراكز_التكلفة','مراكز التكلفة')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-excel ml-1 text-green-400"></i> Excel</button>
+        <button onclick="exportCostCenterReportPDF()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-pdf ml-1 text-red-400"></i> PDF</button>
+        <button onclick="navigate('/cost-centers')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-4 py-2 rounded-xl text-sm"><i class="fas fa-arrow-right ml-1"></i> العودة</button>
+      </div>
+    </div>
+    <!-- بطاقات إجمالية -->
+    <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 text-center">
+        <div class="text-2xl font-bold text-orange-400 mb-1">${data.length}</div>
+        <div class="text-gray-500 text-xs">المراكز النشطة</div>
+      </div>
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 text-center">
+        <div class="text-lg font-bold text-green-400 mb-1 font-mono">${formatNumber(totalDebit)}</div>
+        <div class="text-gray-500 text-xs">إجمالي المدين</div>
+      </div>
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 text-center">
+        <div class="text-lg font-bold text-red-400 mb-1 font-mono">${formatNumber(totalCredit)}</div>
+        <div class="text-gray-500 text-xs">إجمالي الدائن</div>
+      </div>
+      <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 text-center">
+        <div class="text-lg font-bold ${totalDebit - totalCredit >= 0 ? 'text-primary-400' : 'text-red-400'} mb-1 font-mono">${formatNumber(totalDebit - totalCredit)}</div>
+        <div class="text-gray-500 text-xs">صافي الرصيد</div>
+      </div>
+    </div>
+    <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
+      ${data.length === 0 ? emptyState('لا توجد حركات على مراكز التكلفة', 'fa-bullseye') : `
+      <table class="w-full text-sm" id="ccReportTable"><thead><tr class="bg-dark-900 text-gray-400 text-xs uppercase">
+        <th class="px-4 py-3 text-right">الرمز</th><th class="px-4 py-3 text-right">المركز</th>
+        <th class="px-4 py-3 text-left">مدين</th><th class="px-4 py-3 text-left">دائن</th><th class="px-4 py-3 text-left">صافي الرصيد</th>
+        <th class="px-4 py-3 text-center">عدد القيود</th><th class="px-4 py-3 text-center">سندات قبض</th><th class="px-4 py-3 text-center">سندات صرف</th>
+        <th class="px-4 py-3 text-center">تفاصيل</th>
+      </tr></thead><tbody>${data.map(cc => `<tr class="table-row border-b border-dark-700/50">
+        <td class="px-4 py-2.5 font-mono text-primary-400 text-xs">${cc.code}</td>
+        <td class="px-4 py-2.5 text-gray-200">${cc.name_ar}</td>
+        <td class="px-4 py-2.5 text-left font-mono text-xs text-green-400">${cc.total_debit > 0 ? formatNumber(cc.total_debit) : '-'}</td>
+        <td class="px-4 py-2.5 text-left font-mono text-xs text-red-400">${cc.total_credit > 0 ? formatNumber(cc.total_credit) : '-'}</td>
+        <td class="px-4 py-2.5 text-left font-mono text-xs font-bold ${cc.net_balance >= 0 ? 'text-white' : 'text-red-400'}">${formatNumber(cc.net_balance)}</td>
+        <td class="px-4 py-2.5 text-center text-gray-400">${cc.entry_count || 0}</td>
+        <td class="px-4 py-2.5 text-center"><span class="text-green-400 font-mono text-xs">${cc.receipt_count ? formatNumber(cc.receipt_total) + ' ('+cc.receipt_count+')' : '-'}</span></td>
+        <td class="px-4 py-2.5 text-center"><span class="text-red-400 font-mono text-xs">${cc.payment_count ? formatNumber(cc.payment_total) + ' ('+cc.payment_count+')' : '-'}</span></td>
+        <td class="px-4 py-2.5 text-center"><button onclick="showCostCenterTransactions(${cc.id})" class="text-primary-400 hover:text-primary-300 text-xs"><i class="fas fa-external-link-alt"></i></button></td>
+      </tr>`).join('')}
+      <tr class="bg-primary-900/30 font-bold text-white text-sm"><td class="px-4 py-3" colspan="2">المجموع</td>
+        <td class="px-4 py-3 text-left font-mono text-green-400">${formatNumber(totalDebit)}</td>
+        <td class="px-4 py-3 text-left font-mono text-red-400">${formatNumber(totalCredit)}</td>
+        <td class="px-4 py-3 text-left font-mono">${formatNumber(totalDebit - totalCredit)}</td>
+        <td class="px-4 py-3 text-center">${data.reduce((s,c) => s + (c.entry_count||0), 0)}</td>
+        <td class="px-4 py-3" colspan="3"></td>
+      </tr></tbody></table>`}
+    </div>`;
+}
+
+function exportCostCenterReportPDF() {
+  const table = document.getElementById('ccReportTable');
+  if (!table) { showToast('لا توجد بيانات', 'warning'); return; }
+  exportPDF('تقرير أرصدة مراكز التكلفة', table.outerHTML);
+}
+
+// عرض حركات مركز تكلفة
+async function showCostCenterTransactions(id) {
+  const res = await apiFetch(`/cost-centers/${id}/transactions`);
+  if (!res.success) { showToast('خطأ في جلب البيانات', 'error'); return; }
+  const d = res.data;
+  
+  showModal(`حركات مركز التكلفة: ${d.center.name_ar}`, `
+    <div class="grid grid-cols-3 gap-3 mb-4">
+      <div class="bg-dark-900 rounded-xl p-3 text-center"><span class="text-gray-500 text-xs block mb-1">إجمالي المدين</span><strong class="text-green-400 font-mono">${formatNumber(d.total_debit)}</strong></div>
+      <div class="bg-dark-900 rounded-xl p-3 text-center"><span class="text-gray-500 text-xs block mb-1">إجمالي الدائن</span><strong class="text-red-400 font-mono">${formatNumber(d.total_credit)}</strong></div>
+      <div class="bg-primary-900/30 rounded-xl p-3 text-center border border-primary-700"><span class="text-gray-400 text-xs block mb-1">صافي الرصيد</span><strong class="text-primary-400 font-mono text-lg">${formatNumber(d.net_balance)}</strong></div>
+    </div>
+    ${d.lines.length === 0 ? emptyState('لا توجد حركات على هذا المركز', 'fa-bullseye') : `
+    <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
+      <table class="w-full text-sm"><thead class="sticky top-0"><tr class="bg-dark-900 text-gray-400 text-xs uppercase">
+        <th class="px-3 py-2 text-right">التاريخ</th><th class="px-3 py-2 text-right">رقم القيد</th><th class="px-3 py-2 text-right">الحساب</th>
+        <th class="px-3 py-2 text-right">البيان</th><th class="px-3 py-2 text-left">مدين</th><th class="px-3 py-2 text-left">دائن</th>
+      </tr></thead><tbody>
+      ${d.lines.map(l => `<tr class="border-b border-dark-700/50 text-xs">
+        <td class="px-3 py-2 text-gray-400">${l.entry_date}</td>
+        <td class="px-3 py-2 font-mono text-primary-400 cursor-pointer hover:text-primary-300" onclick="closeModal();viewJournalEntry(${l.journal_entry_id})">#${l.entry_number}</td>
+        <td class="px-3 py-2"><span class="text-primary-400 font-mono">${l.account_code}</span> ${l.account_name}</td>
+        <td class="px-3 py-2 text-gray-400 max-w-[200px] truncate">${l.description || l.entry_description || ''}</td>
+        <td class="px-3 py-2 text-left font-mono text-green-400">${l.debit > 0 ? formatNumber(l.debit) : ''}</td>
+        <td class="px-3 py-2 text-left font-mono text-red-400">${l.credit > 0 ? formatNumber(l.credit) : ''}</td>
+      </tr>`).join('')}
+      </tbody></table>
+    </div>`}`,
+    `<button onclick="closeModal()" class="px-5 py-2.5 rounded-xl bg-primary-600 text-white text-sm">إغلاق</button>`, 'max-w-4xl');
 }
 
 function showAddCostCenterModal() {
@@ -2658,9 +2897,45 @@ function activateFiscalYear(id, year) {
 }
 
 function closeFiscalYear(id, year) {
-  showConfirm('إغلاق السنة المالية', `سيتم إغلاق السنة ${year} نهائياً.`, async () => {
+  showConfirm('إغلاق السنة المالية', `
+    <div class="text-right text-sm text-gray-300 space-y-2">
+      <p>سيتم تنفيذ الخطوات التالية:</p>
+      <ol class="list-decimal list-inside space-y-1 text-gray-400 text-xs">
+        <li>إقفال حسابات الإيرادات والمصروفات</li>
+        <li>ترحيل صافي الربح/الخسارة إلى حساب الأرباح المحتجزة</li>
+        <li>تحديث الأرصدة الافتتاحية لحسابات الميزانية</li>
+        <li>إغلاق السنة نهائياً (لا يمكن التراجع)</li>
+      </ol>
+      <p class="text-yellow-400 text-xs mt-3"><i class="fas fa-exclamation-triangle ml-1"></i> تأكد من ترحيل جميع القيود والسندات قبل الإغلاق</p>
+    </div>`, async () => {
+    showToast('جاري إغلاق السنة المالية وترحيل الأرصدة...', 'info');
     const res = await apiFetch(`/admin/fiscal-years/${id}/close`, { method: 'POST' });
-    if (res.success) { showToast(res.message); navigate('/admin/fiscal-years'); } else showToast(res.message, 'error');
+    if (res.success) {
+      const d = res.data || {};
+      showModal('نتائج إغلاق السنة المالية ' + year, `
+        <div class="space-y-4">
+          <div class="bg-green-500/10 border border-green-500/30 rounded-xl p-4 text-center">
+            <i class="fas fa-check-circle text-green-400 text-3xl mb-2"></i>
+            <h3 class="text-green-400 font-bold text-lg">${res.message}</h3>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="bg-dark-900 rounded-xl p-3 text-center"><span class="text-gray-500 text-xs block">إجمالي الإيرادات</span><strong class="text-green-400 font-mono">${formatNumber(d.totalRevenue || 0)}</strong></div>
+            <div class="bg-dark-900 rounded-xl p-3 text-center"><span class="text-gray-500 text-xs block">إجمالي المصروفات</span><strong class="text-red-400 font-mono">${formatNumber(d.totalExpenses || 0)}</strong></div>
+          </div>
+          <div class="bg-primary-900/30 border border-primary-700 rounded-xl p-4 text-center">
+            <span class="text-gray-400 text-sm block mb-1">${(d.netIncome || 0) >= 0 ? 'صافي الربح' : 'صافي الخسارة'}</span>
+            <strong class="text-primary-400 font-mono text-2xl">${formatNumber(Math.abs(d.netIncome || 0))}</strong>
+          </div>
+          <div class="bg-dark-900 rounded-xl p-3 text-sm text-gray-400">
+            <div class="flex justify-between py-1"><span>حسابات تم إقفالها:</span><span class="text-white font-bold">${d.accountsClosed || 0}</span></div>
+            <div class="flex justify-between py-1"><span>أرصدة تم ترحيلها:</span><span class="text-white font-bold">${d.balancesCarriedForward || 0}</span></div>
+          </div>
+        </div>`,
+        `<button onclick="closeModal();navigate('/admin/fiscal-years')" class="px-6 py-2.5 rounded-xl bg-primary-600 text-white text-sm">موافق</button>`, 'max-w-lg');
+      addNotification('إغلاق سنة مالية', `تم إغلاق السنة ${year} بنجاح`, 'success');
+    } else {
+      showToast(res.message, 'error');
+    }
   });
 }
 
@@ -2831,6 +3106,203 @@ function downloadCSV(csv, filename) {
   link.download = `${filename}_${todayStr()}.csv`;
   link.click();
   showToast('تم تصدير الملف بنجاح', 'success');
+}
+
+// ╔══════════════════════════════════════════════════╗
+// ║           PDF EXPORT (تصدير PDF احترافي)          ║
+// ╚══════════════════════════════════════════════════╝
+async function exportPDF(title, contentHtml, orientation = 'portrait') {
+  if (typeof html2canvas === 'undefined' || typeof jspdf === 'undefined') {
+    showToast('مكتبات PDF غير متوفرة بعد، يرجى الانتظار...', 'warning');
+    return;
+  }
+
+  showToast('جاري إنشاء ملف PDF...', 'info');
+
+  // Create a temporary container for the PDF content
+  const container = document.createElement('div');
+  container.id = 'pdfContainer';
+  container.style.cssText = 'position:fixed; top:-9999px; left:0; width:794px; background:white; padding:40px; direction:rtl; font-family:Tajawal,sans-serif; color:#111;';
+  
+  const user = getUser();
+  const dateStr = new Date().toLocaleDateString('ar-IQ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  
+  container.innerHTML = `
+    <div style="text-align:center; border-bottom:3px double #1e3a5f; padding-bottom:15px; margin-bottom:20px;">
+      <h1 style="font-size:20pt; font-weight:bold; color:#1e3a5f; margin:0 0 5px;">النظام المحاسبي الحديث</h1>
+      <h2 style="font-size:14pt; color:#333; margin:0 0 5px;">${title}</h2>
+      <p style="font-size:9pt; color:#888;">التاريخ: ${dateStr} | المستخدم: ${user?.fullName || 'مدير'} | ${new Date().toLocaleTimeString('ar-IQ')}</p>
+    </div>
+    <div style="font-size:10pt; line-height:1.8;">${contentHtml}</div>
+    <div style="margin-top:50px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:40px; text-align:center; font-size:10pt;">
+      <div style="padding-top:10px; border-top:1px solid #333;">المحاسب</div>
+      <div style="padding-top:10px; border-top:1px solid #333;">المدقق</div>
+      <div style="padding-top:10px; border-top:1px solid #333;">المدير المالي</div>
+    </div>
+    <div style="text-align:center; margin-top:30px; font-size:7pt; color:#aaa; border-top:1px solid #ddd; padding-top:8px;">
+      النظام المحاسبي الحديث &copy; ${new Date().getFullYear()} - تم الإنشاء في ${new Date().toLocaleString('ar-IQ')}
+    </div>
+  `;
+  
+  // Style tables inside PDF
+  container.querySelectorAll('table').forEach(table => {
+    table.style.cssText = 'width:100%; border-collapse:collapse; margin:10px 0;';
+    table.querySelectorAll('th').forEach(th => {
+      th.style.cssText = 'background:#f0f4f8; color:#1e3a5f; padding:8px 10px; border:1px solid #ccc; text-align:right; font-size:9pt; font-weight:bold;';
+    });
+    table.querySelectorAll('td').forEach(td => {
+      td.style.cssText = 'padding:6px 10px; border:1px solid #ddd; text-align:right; font-size:9pt; color:#333;';
+    });
+  });
+
+  document.body.appendChild(container);
+
+  try {
+    const canvas = await html2canvas(container, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+      width: 794,
+      windowWidth: 794
+    });
+
+    const { jsPDF } = jspdf;
+    const isLandscape = orientation === 'landscape';
+    const pdf = new jsPDF({
+      orientation: orientation,
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    const pageWidth = isLandscape ? 297 : 210;
+    const pageHeight = isLandscape ? 210 : 297;
+    const margin = 10;
+    const imgWidth = pageWidth - (margin * 2);
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+
+    // Handle multi-page
+    if (imgHeight <= pageHeight - (margin * 2)) {
+      pdf.addImage(imgData, 'JPEG', margin, margin, imgWidth, imgHeight);
+    } else {
+      let yOffset = 0;
+      const contentHeight = pageHeight - (margin * 2);
+      while (yOffset < imgHeight) {
+        if (yOffset > 0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', margin, margin - yOffset, imgWidth, imgHeight);
+        yOffset += contentHeight;
+      }
+    }
+
+    pdf.save(`${title}_${todayStr()}.pdf`);
+    showToast('تم تصدير PDF بنجاح', 'success');
+    addNotification('تصدير PDF', `تم تصدير "${title}" بصيغة PDF`, 'success');
+  } catch (e) {
+    console.error('PDF Export Error:', e);
+    showToast('خطأ في تصدير PDF: ' + e.message, 'error');
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
+// PDF export for specific reports
+function exportTrialBalancePDF() {
+  const table = document.getElementById('trialBalanceTable');
+  if (!table) { showToast('لا توجد بيانات', 'warning'); return; }
+  exportPDF('ميزان المراجعة', table.outerHTML);
+}
+
+function exportAccountStatementPDF() {
+  const header = document.getElementById('accStmtHeader');
+  const table = document.getElementById('accStmtTable');
+  if (!table) { showToast('لا توجد بيانات', 'warning'); return; }
+  const html = (header ? header.outerHTML : '') + table.outerHTML;
+  exportPDF('كشف حساب', html);
+}
+
+function exportIncomeStatementPDF() {
+  const el = document.getElementById('incomeTable');
+  if (!el) { showToast('لا توجد بيانات', 'warning'); return; }
+  exportPDF('قائمة الدخل', el.innerHTML);
+}
+
+function exportBalanceSheetPDF() {
+  const el = document.getElementById('bsResult');
+  if (!el) { showToast('لا توجد بيانات', 'warning'); return; }
+  exportPDF('الميزانية العمومية', el.innerHTML);
+}
+
+async function exportJournalEntryPDF(id) {
+  const res = await apiFetch(`/journal/${id}`);
+  if (!res.success) { showToast('خطأ', 'error'); return; }
+  const e = res.data;
+  const html = `
+    <div style="margin-bottom:15px;">
+      <table style="width:100%;"><tr>
+        <td style="border:none;padding:5px;"><strong>رقم القيد:</strong> ${e.entry_number}</td>
+        <td style="border:none;padding:5px;"><strong>التاريخ:</strong> ${e.entry_date}</td>
+        <td style="border:none;padding:5px;"><strong>الحالة:</strong> ${e.status==='posted'?'مرحّل':'مسودة'}</td>
+        <td style="border:none;padding:5px;"><strong>المرجع:</strong> ${e.reference||'-'}</td>
+      </tr></table>
+      ${e.description ? `<p style="margin:10px 0;"><strong>الوصف:</strong> ${e.description}</p>` : ''}
+    </div>
+    <table>
+      <thead><tr><th>#</th><th>الحساب</th><th>البيان</th><th>مدين</th><th>دائن</th></tr></thead>
+      <tbody>
+        ${e.lines.map((l,i) => `<tr>
+          <td>${i+1}</td>
+          <td>${l.account_code} - ${l.account_name}</td>
+          <td>${l.description||''}</td>
+          <td style="text-align:left;font-family:monospace;">${l.debit > 0 ? formatNumber(l.debit) : ''}</td>
+          <td style="text-align:left;font-family:monospace;">${l.credit > 0 ? formatNumber(l.credit) : ''}</td>
+        </tr>`).join('')}
+        <tr style="background:#e8f0fe;font-weight:bold;">
+          <td colspan="3">المجموع</td>
+          <td style="text-align:left;font-family:monospace;">${formatNumber(e.total_debit)}</td>
+          <td style="text-align:left;font-family:monospace;">${formatNumber(e.total_credit)}</td>
+        </tr>
+      </tbody>
+    </table>`;
+  exportPDF(`قيد محاسبي رقم ${e.entry_number}`, html);
+}
+
+async function exportVoucherPDF(id) {
+  const res = await apiFetch(`/vouchers/${id}`);
+  if (!res.success) { showToast('خطأ', 'error'); return; }
+  const v = res.data;
+  const typeLabel = v.voucher_type === 'receipt' ? 'قبض' : 'صرف';
+  const html = `
+    <div style="margin-bottom:15px;">
+      <h3 style="text-align:center; font-size:14pt; color:#1e3a5f; margin-bottom:10px;">سند ${typeLabel} رقم ${v.voucher_number}</h3>
+      <table style="width:100%;"><tr>
+        <td style="border:none;padding:5px;"><strong>التاريخ:</strong> ${v.voucher_date}</td>
+        <td style="border:none;padding:5px;"><strong>المبلغ:</strong> ${formatNumber(v.amount)}</td>
+        <td style="border:none;padding:5px;"><strong>المستفيد:</strong> ${v.beneficiary||'-'}</td>
+        <td style="border:none;padding:5px;"><strong>طريقة الدفع:</strong> ${v.payment_method==='cash'?'نقد':v.payment_method==='check'?'شيك':'تحويل'}</td>
+      </tr></table>
+      ${v.description ? `<p style="margin:10px 0;"><strong>البيان:</strong> ${v.description}</p>` : ''}
+      ${v.check_number ? `<p style="margin:5px 0;"><strong>رقم الشيك:</strong> ${v.check_number} | <strong>تاريخ الشيك:</strong> ${v.check_date||'-'} | <strong>البنك:</strong> ${v.bank_name||'-'}</p>` : ''}
+    </div>
+    ${v.details && v.details.length > 0 ? `
+    <table>
+      <thead><tr><th>#</th><th>الحساب</th><th>المبلغ</th><th>البيان</th></tr></thead>
+      <tbody>
+        ${v.details.map((d,i) => `<tr>
+          <td>${i+1}</td>
+          <td>${d.account_code||''} - ${d.account_name||''}</td>
+          <td style="text-align:left;font-family:monospace;">${formatNumber(d.amount)}</td>
+          <td>${d.description||''}</td>
+        </tr>`).join('')}
+        <tr style="background:#e8f0fe;font-weight:bold;">
+          <td colspan="2">المجموع</td>
+          <td style="text-align:left;font-family:monospace;">${formatNumber(v.amount)}</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>` : ''}`;
+  exportPDF(`سند ${typeLabel} رقم ${v.voucher_number}`, html);
 }
 
 // Print with company header

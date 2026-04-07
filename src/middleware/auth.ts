@@ -77,14 +77,66 @@ export function requirePermission(moduleRoute: string, permission: string) {
       if (!module) { await next(); return }
 
       const perm = await c.env.DB.prepare(
-        `SELECT can_${permission} as has_perm FROM user_permissions WHERE user_id = ? AND module_id = ?`
+        `SELECT can_view, can_create, can_edit, can_delete, can_print FROM user_permissions WHERE user_id = ? AND module_id = ?`
       ).bind(user.id, module.id).first() as any
 
-      if (!perm || !perm.has_perm) {
-        return c.json({ success: false, message: 'ليس لديك صلاحية لهذه العملية' }, 403)
+      if (!perm) {
+        return c.json({ success: false, message: 'ليس لديك صلاحية للوصول لهذه الوحدة' }, 403)
+      }
+
+      const permKey = `can_${permission}` as keyof typeof perm
+      if (!perm[permKey]) {
+        const permNames: Record<string, string> = { view: 'العرض', create: 'الإنشاء', edit: 'التعديل', delete: 'الحذف', print: 'الطباعة' }
+        return c.json({ success: false, message: `ليس لديك صلاحية ${permNames[permission] || permission}` }, 403)
       }
     } catch {
       // If permission check fails, allow admin to proceed
+    }
+    await next()
+  }
+}
+
+// Middleware ذكي يفحص HTTP method ويطبق الصلاحية المناسبة تلقائياً
+export function checkModulePermission(moduleRoute: string) {
+  return async (c: Context<{ Bindings: Bindings; Variables: Variables }>, next: Next) => {
+    const user = c.get('user') as any
+    if (!user) return c.json({ success: false, message: 'غير مصرح' }, 401)
+    
+    // Admin has all permissions
+    if (user.role === 'admin') {
+      await next()
+      return
+    }
+
+    // Map HTTP method to permission
+    const method = c.req.method.toUpperCase()
+    let permission = 'view'
+    if (method === 'POST') permission = 'create'
+    else if (method === 'PUT' || method === 'PATCH') permission = 'edit'
+    else if (method === 'DELETE') permission = 'delete'
+
+    try {
+      const module = await c.env.DB.prepare(
+        'SELECT id FROM modules WHERE route = ?'
+      ).bind(moduleRoute).first() as any
+      
+      if (!module) { await next(); return }
+
+      const perm = await c.env.DB.prepare(
+        `SELECT can_view, can_create, can_edit, can_delete, can_print FROM user_permissions WHERE user_id = ? AND module_id = ?`
+      ).bind(user.id, module.id).first() as any
+
+      if (!perm) {
+        return c.json({ success: false, message: 'ليس لديك صلاحية للوصول لهذه الوحدة' }, 403)
+      }
+
+      const permKey = `can_${permission}` as keyof typeof perm
+      if (!perm[permKey]) {
+        const permNames: Record<string, string> = { view: 'العرض', create: 'الإنشاء', edit: 'التعديل', delete: 'الحذف' }
+        return c.json({ success: false, message: `ليس لديك صلاحية ${permNames[permission] || permission} في هذه الوحدة` }, 403)
+      }
+    } catch {
+      // Fail open for admin users
     }
     await next()
   }

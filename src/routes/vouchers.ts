@@ -62,7 +62,7 @@ voucherRoutes.get('/:id', async (c) => {
 voucherRoutes.post('/', async (c) => {
   try {
     const body = await c.req.json()
-    const { voucher_type, voucher_date, account_id, amount, currency_id, exchange_rate, description, beneficiary, payment_method, check_number, check_date, bank_name, reference, details, created_by } = body
+    const { voucher_type, voucher_date, account_id, amount, currency_id, exchange_rate, description, beneficiary, payment_method, check_number, check_date, bank_name, reference, details, created_by, cost_center_id } = body
 
     if (!voucher_type || !voucher_date || !account_id || !amount) {
       return c.json({ success: false, message: 'يرجى ملء الحقول المطلوبة' }, 400)
@@ -78,9 +78,9 @@ voucherRoutes.post('/', async (c) => {
     const voucherNumber = (last?.max_num || 0) + 1
 
     const result = await c.env.DB.prepare(`
-      INSERT INTO vouchers (voucher_number, voucher_type, voucher_date, fiscal_year_id, account_id, amount, currency_id, exchange_rate, description, beneficiary, payment_method, check_number, check_date, bank_name, reference, status, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
-    `).bind(voucherNumber, voucher_type, voucher_date, fy.id, account_id, amount, currency_id || 1, exchange_rate || 1, description || null, beneficiary || null, payment_method || 'cash', check_number || null, check_date || null, bank_name || null, reference || null, created_by || null).run()
+      INSERT INTO vouchers (voucher_number, voucher_type, voucher_date, fiscal_year_id, account_id, amount, currency_id, exchange_rate, description, beneficiary, payment_method, check_number, check_date, bank_name, reference, status, created_by, cost_center_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+    `).bind(voucherNumber, voucher_type, voucher_date, fy.id, account_id, amount, currency_id || 1, exchange_rate || 1, description || null, beneficiary || null, payment_method || 'cash', check_number || null, check_date || null, bank_name || null, reference || null, created_by || null, cost_center_id || null).run()
 
     const voucherId = result.meta.last_row_id
 
@@ -110,15 +110,15 @@ voucherRoutes.put('/:id', async (c) => {
     if (v.status === 'posted') return c.json({ success: false, message: 'لا يمكن تعديل سند مرحّل' }, 400)
 
     const body = await c.req.json()
-    const { voucher_date, account_id, amount, description, beneficiary, payment_method, check_number, check_date, bank_name, details } = body
+    const { voucher_date, account_id, amount, description, beneficiary, payment_method, check_number, check_date, bank_name, details, cost_center_id } = body
 
     if (!voucher_date || !account_id || !amount) {
       return c.json({ success: false, message: 'يرجى ملء الحقول المطلوبة' }, 400)
     }
 
     await c.env.DB.prepare(`
-      UPDATE vouchers SET voucher_date=?, account_id=?, amount=?, description=?, beneficiary=?, payment_method=?, check_number=?, check_date=?, bank_name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
-    `).bind(voucher_date, account_id, amount, description || null, beneficiary || null, payment_method || 'cash', check_number || null, check_date || null, bank_name || null, id).run()
+      UPDATE vouchers SET voucher_date=?, account_id=?, amount=?, description=?, beneficiary=?, payment_method=?, check_number=?, check_date=?, bank_name=?, cost_center_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
+    `).bind(voucher_date, account_id, amount, description || null, beneficiary || null, payment_method || 'cash', check_number || null, check_date || null, bank_name || null, cost_center_id || null, id).run()
 
     // Update details
     await c.env.DB.prepare('DELETE FROM voucher_details WHERE voucher_id = ?').bind(id).run()
@@ -167,27 +167,27 @@ voucherRoutes.post('/:id/post', async (c) => {
     if (v.voucher_type === 'receipt') {
       // سند قبض: مدين الحساب الرئيسي (مثلاً الصندوق)، دائن الحسابات التفصيلية
       await c.env.DB.prepare(`
-        INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit) VALUES (?, 1, ?, ?, ?, 0)
-      `).bind(jeId, v.account_id, v.description, v.amount).run()
+        INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit, cost_center_id) VALUES (?, 1, ?, ?, ?, 0, ?)
+      `).bind(jeId, v.account_id, v.description, v.amount, v.cost_center_id || null).run()
 
       if (details.length > 0) {
         for (let i = 0; i < details.length; i++) {
           await c.env.DB.prepare(`
-            INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit) VALUES (?, ?, ?, ?, 0, ?)
-          `).bind(jeId, i + 2, details[i].account_id, details[i].description, details[i].amount).run()
+            INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit, cost_center_id) VALUES (?, ?, ?, ?, 0, ?, ?)
+          `).bind(jeId, i + 2, details[i].account_id, details[i].description, details[i].amount, details[i].cost_center_id || v.cost_center_id || null).run()
         }
       }
     } else {
       // سند صرف: دائن الحساب الرئيسي، مدين الحسابات التفصيلية
       await c.env.DB.prepare(`
-        INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit) VALUES (?, 1, ?, ?, 0, ?)
-      `).bind(jeId, v.account_id, v.description, v.amount).run()
+        INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit, cost_center_id) VALUES (?, 1, ?, ?, 0, ?, ?)
+      `).bind(jeId, v.account_id, v.description, v.amount, v.cost_center_id || null).run()
 
       if (details.length > 0) {
         for (let i = 0; i < details.length; i++) {
           await c.env.DB.prepare(`
-            INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit) VALUES (?, ?, ?, ?, ?, 0)
-          `).bind(jeId, i + 2, details[i].account_id, details[i].description, details[i].amount).run()
+            INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, description, debit, credit, cost_center_id) VALUES (?, ?, ?, ?, ?, 0, ?)
+          `).bind(jeId, i + 2, details[i].account_id, details[i].description, details[i].amount, details[i].cost_center_id || v.cost_center_id || null).run()
         }
       }
     }

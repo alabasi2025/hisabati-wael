@@ -49,7 +49,8 @@ INSERT OR IGNORE INTO modules (id, name, name_ar, icon, route, parent_id, sort_o
   (16, 'system_settings', 'إعدادات النظام', 'fas fa-sliders-h', '/admin/settings', 14, 2, 'page'),
   (17, 'currencies', 'العملات', 'fas fa-coins', '/admin/currencies', 14, 3, 'page'),
   (18, 'fiscal_years_mgmt', 'السنوات المالية', 'fas fa-calendar-alt', '/admin/fiscal-years', 14, 4, 'page'),
-  (19, 'audit_log', 'سجل النشاطات', 'fas fa-history', '/admin/audit-log', 14, 5, 'page');
+  (19, 'audit_log', 'سجل النشاطات', 'fas fa-history', '/admin/audit-log', 14, 5, 'page'),
+  (20, 'cost_center_report', 'تقرير مراكز التكلفة', 'fas fa-chart-bar', '/cost-centers/report', 9, 5, 'report');
 
 -- صلاحيات المدير (كل شي مفتوح)
 INSERT OR IGNORE INTO user_permissions (user_id, module_id, can_view, can_create, can_edit, can_delete, can_print)
