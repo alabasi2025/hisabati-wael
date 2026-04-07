@@ -1,117 +1,131 @@
-# النظام المحاسبي الحديث - Accounting System
+# النظام المحاسبي الحديث - Modern Accounting System
 
 ## نظرة عامة
-نظام محاسبي متكامل تم تحويله من Oracle Forms 6i القديم إلى تطبيق ويب حديث يعمل على Cloudflare Pages.
-
-**التقنيات:** Hono + TypeScript + Cloudflare D1 + TailwindCSS
+نظام محاسبي متكامل تم تحويله من Oracle Forms إلى تطبيق ويب حديث باستخدام Hono + TypeScript + Cloudflare D1.
 
 ## الميزات المكتملة
 
-### 1. تسجيل الدخول وإدارة المستخدمين
-- شاشة دخول أنيقة مع تشفير
-- نظام أدوار (مدير، مدير قسم، محاسب، مستخدم، مشاهد)
-- إدارة المستخدمين (إضافة/تعديل/تعطيل)
-- `/login` - شاشة تسجيل الدخول
-- `POST /api/auth/login` - تسجيل دخول API
+### 1. لوحة التحكم (Dashboard)
+- بطاقات إحصائية: رصيد الصندوق، إجمالي القبض/الصرف، القيود
+- أرصدة البنوك مع التفاصيل
+- **رسم بياني شريطي** للحركة الشهرية (مدين/دائن) باستخدام Chart.js
+- **رسم بياني دائري** لتوزيع أنواع الحسابات
+- أعلى 10 حسابات بالرصيد مع شريط تقدم
+- آخر القيود والسندات مع روابط سريعة
 
-### 2. لوحة التحكم
-- إحصائيات عامة (رصيد الصندوق، القبض، الصرف، القيود)
-- آخر القيود والسندات
-- ملخص شهري
-- `/app` - لوحة التحكم الرئيسية
-- `GET /api/dashboard/stats` - إحصائيات
+### 2. دليل الحسابات (Chart of Accounts)
+- عرض شجري 4 مستويات قابل للطي/الفرد
+- عرض جدولي بديل
+- بحث وفلاتر بالنوع (أصول/خصوم/ملكية/إيرادات/مصروفات)
+- إضافة/تعديل/حذف مع حماية للحسابات المستخدمة
+- ترقيم تلقائي ذكي عند اختيار حساب أب
+- دعم الرصيد الافتتاحي
 
-### 3. دليل الحسابات (شجرة)
-- هيكل شجري متعدد المستويات
-- إضافة/تعديل/حذف حسابات
-- بحث سريع
-- أنواع: أصول، خصوم، ملكية، إيرادات، مصروفات
-- `GET /api/accounts` - جلب كل الحسابات
-- `POST /api/accounts` - إنشاء حساب
-- `PUT /api/accounts/:id` - تعديل
-- `DELETE /api/accounts/:id` - حذف
-- `GET /api/accounts/search/:query` - بحث
-- `GET /api/accounts/leaf/all` - الحسابات الفرعية فقط
+### 3. القيود اليومية (Journal Entries)
+- إنشاء قيود متعددة الأسطر
+- التحقق التلقائي من التوازن (مدين = دائن)
+- **تعديل القيود** غير المرحّلة
+- ترحيل القيود وتحديث الأرصدة
+- حذف القيود المسودة
+- فلاتر: بحث، حالة، نطاق تاريخ
+- **طباعة القيد** مع توقيعات
 
-### 4. القيود المحاسبية
-- إنشاء قيود يومية متعددة الأسطر
-- ترحيل القيود (تحديث أرصدة الحسابات)
-- التحقق من التوازن (مدين = دائن)
-- ترقيم تلقائي
-- `GET /api/journal` - القيود (مع فلاتر)
-- `POST /api/journal` - قيد جديد
-- `GET /api/journal/:id` - تفاصيل قيد
-- `POST /api/journal/:id/post` - ترحيل
-- `DELETE /api/journal/:id` - حذف (مسودة فقط)
+### 4. السندات (Vouchers)
+- سندات القبض وسندات الصرف
+- ربط تفصيلي بالحسابات (توزيع المبالغ)
+- **تعديل السندات** غير المرحّلة (جديد)
+- ترحيل تلقائي ينشئ قيد محاسبي
+- دعم طرق الدفع: نقد/شيك/تحويل
+- بيانات الشيك (رقم، تاريخ، بنك)
+- فلاتر وبحث متقدم
+- **طباعة احترافية** مع توقيعات
 
-### 5. السندات (قبض وصرف)
-- سندات قبض وسندات صرف
-- توزيع المبالغ على عدة حسابات
-- ترحيل تلقائي مع إنشاء قيد محاسبي
-- طرق دفع: نقد، شيك، تحويل
-- `GET /api/vouchers?type=receipt|payment` - القائمة
-- `POST /api/vouchers` - سند جديد
-- `GET /api/vouchers/:id` - تفاصيل
-- `POST /api/vouchers/:id/post` - ترحيل
-- `DELETE /api/vouchers/:id` - حذف
+### 5. التقارير المالية
+- **ميزان المراجعة**: فلاتر تاريخ ومستوى عرض + تصدير CSV
+- **كشف حساب**: رصيد افتتاحي/ختامي، رصيد تشغيلي + طباعة
+- **قائمة الدخل**: إيرادات ومصروفات وصافي الربح/الخسارة
+- **الميزانية العمومية**: أصول = خصوم + ملكية مع التحقق من التوازن
 
-### 6. التقارير المالية
-- **ميزان المراجعة** - `GET /api/reports/trial-balance`
-- **كشف حساب** - `GET /api/reports/account-statement/:accountId`
-- **قائمة الدخل** - `GET /api/reports/income-statement`
-- **الميزانية العمومية** - `GET /api/reports/balance-sheet`
-- دعم الطباعة
+### 6. مراكز التكلفة (Cost Centers) - جديد
+- CRUD كامل (إنشاء/عرض/تعديل/حذف)
+- ربط مع سجل المراجعة
 
-### 7. الإدارة
-- إعدادات النظام (اسم الشركة، خانات عشرية...)
-- إدارة العملات (دينار عراقي، دولار، يورو، ليرة)
-- إدارة السنوات المالية
-- إدارة المستخدمين
+### 7. إدارة المستخدمين
+- إنشاء/تعديل/تعطيل المستخدمين
+- الأدوار: مدير نظام، مدير قسم، محاسب، مستخدم، مشاهد
+- **شاشة صلاحيات تفصيلية** (جديد): عرض/إنشاء/تعديل/حذف/طباعة لكل وحدة
+- تحديد/إلغاء الكل
+
+### 8. إدارة النظام
+- إعدادات الشركة (اسم، خانات عشرية، ترحيل تلقائي)
+- إدارة العملات (أسعار صرف)
+- السنوات المالية (تفعيل/إغلاق مع تحقق)
+- سجل النشاطات (Audit Log) مع فلاتر
+
+### 9. ميزات تقنية
+- Middleware للمصادقة (auth.ts)
+- تسجيل دخول مع تصميم زجاجي
+- تنبيهات (Toast) متعددة الألوان
+- مودال متقدم مع أحجام مختلفة
+- تصدير CSV مع دعم العربية (BOM)
+- طباعة احترافية لجميع المستندات
+- واجهة SPA مع Router
+
+## البنية التقنية
+- **Backend**: Hono Framework + TypeScript
+- **Database**: Cloudflare D1 (SQLite)
+- **Frontend**: Vanilla JS + Tailwind CSS + Font Awesome + Chart.js
+- **Font**: Tajawal (Arabic)
+- **Build**: Vite + Wrangler
+
+## المسارات (API Endpoints)
+
+| المسار | الطريقة | الوصف |
+|--------|---------|-------|
+| `/api/auth/login` | POST | تسجيل الدخول |
+| `/api/auth/me` | GET | التحقق من الجلسة |
+| `/api/accounts` | GET/POST | دليل الحسابات |
+| `/api/accounts/:id` | GET/PUT/DELETE | حساب محدد |
+| `/api/accounts/leaf/all` | GET | الحسابات الفرعية فقط |
+| `/api/journal` | GET/POST | القيود اليومية |
+| `/api/journal/:id` | GET/PUT/DELETE | قيد محدد |
+| `/api/journal/:id/post` | POST | ترحيل قيد |
+| `/api/vouchers` | GET/POST | السندات |
+| `/api/vouchers/:id` | GET/PUT/DELETE | سند محدد |
+| `/api/vouchers/:id/post` | POST | ترحيل سند |
+| `/api/cost-centers` | GET/POST | مراكز التكلفة |
+| `/api/cost-centers/:id` | PUT/DELETE | مركز تكلفة محدد |
+| `/api/reports/trial-balance` | GET | ميزان المراجعة |
+| `/api/reports/account-statement/:id` | GET | كشف حساب |
+| `/api/reports/income-statement` | GET | قائمة الدخل |
+| `/api/reports/balance-sheet` | GET | الميزانية العمومية |
+| `/api/dashboard/stats` | GET | إحصائيات لوحة التحكم |
+| `/api/admin/users` | GET/POST | المستخدمين |
+| `/api/admin/users/:id` | PUT | تعديل مستخدم |
+| `/api/admin/users/:id/permissions` | GET/PUT | صلاحيات المستخدم |
+| `/api/admin/settings` | GET/PUT | الإعدادات |
+| `/api/admin/currencies` | GET/POST | العملات |
+| `/api/admin/currencies/:id` | PUT | تعديل عملة |
+| `/api/admin/fiscal-years` | GET/POST | السنوات المالية |
+| `/api/admin/fiscal-years/:id/activate` | POST | تفعيل سنة |
+| `/api/admin/fiscal-years/:id/close` | POST | إغلاق سنة |
+| `/api/admin/audit-log` | GET | سجل المراجعة |
+| `/api/admin/modules` | GET | وحدات القائمة |
 
 ## قاعدة البيانات
-**Cloudflare D1** (SQLite)
-- 13 جدول رئيسي
-- هيكل حسابات شجري مع 40 حساب افتراضي
-- نظام صلاحيات مرن
-- سجل نشاطات (Audit Log)
-
-### الجداول الرئيسية
-| الجدول | الوصف |
-|--------|-------|
-| settings | إعدادات النظام |
-| fiscal_years | السنوات المالية |
-| currencies | العملات |
-| users | المستخدمين |
-| user_permissions | الصلاحيات |
-| modules | وحدات النظام |
-| accounts | دليل الحسابات |
-| journal_entries | رؤوس القيود |
-| journal_entry_lines | تفاصيل القيود |
-| vouchers | السندات |
-| voucher_details | تفاصيل السندات |
-| cost_centers | مراكز التكلفة |
-| audit_log | سجل النشاطات |
+13 جدول: settings, fiscal_years, currencies, users, user_permissions, modules, accounts, journal_entries, journal_entry_lines, vouchers, voucher_details, cost_centers, audit_log
 
 ## بيانات الدخول الافتراضية
-- **المدير:** admin / admin123
-- **المحاسب:** محاسب / user123
+- **admin / admin123** (مدير النظام)
+- **محاسب / user123** (محاسب)
 
-## التشغيل محلياً
+## التشغيل المحلي
 ```bash
 npm install
 npm run build
-npm run db:migrate:local
-npm run db:seed
-npm run dev:sandbox
+npx wrangler d1 migrations apply webapp-production --local
+npx wrangler d1 execute webapp-production --local --file=./seed.sql
+npx wrangler pages dev dist --d1=webapp-production --local --ip 0.0.0.0 --port 3000
 ```
 
-## النشر على Cloudflare
-```bash
-npm run build
-npx wrangler pages deploy dist
-```
-
-## المنصة
-- **النوع:** Cloudflare Pages
-- **التقنية:** Hono + TypeScript + D1
-- **الحالة:** يعمل
+## آخر تحديث: 2026-04-07 - المرحلة الثالثة

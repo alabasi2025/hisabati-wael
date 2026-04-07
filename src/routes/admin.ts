@@ -191,6 +191,35 @@ adminRoutes.get('/audit-log', async (c) => {
   } catch (e: any) { return c.json({ success: false, message: e.message }, 500) }
 })
 
+// === صلاحيات المستخدمين ===
+adminRoutes.get('/users/:id/permissions', async (c) => {
+  try {
+    const userId = c.req.param('id')
+    const { results: modules } = await c.env.DB.prepare("SELECT * FROM modules WHERE module_type != 'group' ORDER BY sort_order").all()
+    const { results: permissions } = await c.env.DB.prepare('SELECT * FROM user_permissions WHERE user_id = ?').bind(userId).all()
+    const permMap: any = {}
+    permissions.forEach((p: any) => { permMap[p.module_id] = p })
+    return c.json({ success: true, data: { modules, permissions: permMap } })
+  } catch (e: any) { return c.json({ success: false, message: e.message }, 500) }
+})
+
+adminRoutes.put('/users/:id/permissions', async (c) => {
+  try {
+    const userId = c.req.param('id')
+    const { permissions } = await c.req.json()
+    // حذف الصلاحيات القديمة
+    await c.env.DB.prepare('DELETE FROM user_permissions WHERE user_id = ?').bind(userId).run()
+    // إدراج الجديدة
+    for (const perm of permissions) {
+      await c.env.DB.prepare(
+        'INSERT INTO user_permissions (user_id, module_id, can_view, can_create, can_edit, can_delete, can_print) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).bind(userId, perm.module_id, perm.can_view ? 1 : 0, perm.can_create ? 1 : 0, perm.can_edit ? 1 : 0, perm.can_delete ? 1 : 0, perm.can_print ? 1 : 0).run()
+    }
+    await c.env.DB.prepare('INSERT INTO audit_log (action, table_name, record_id, new_data) VALUES (?, ?, ?, ?)').bind('update', 'user_permissions', userId, JSON.stringify({ count: permissions.length })).run()
+    return c.json({ success: true, message: 'تم تحديث الصلاحيات بنجاح' })
+  } catch (e: any) { return c.json({ success: false, message: e.message }, 500) }
+})
+
 // === الوحدات (القائمة) ===
 adminRoutes.get('/modules', async (c) => {
   try {

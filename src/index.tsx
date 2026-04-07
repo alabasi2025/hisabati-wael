@@ -8,6 +8,7 @@ import { voucherRoutes } from './routes/vouchers'
 import { reportRoutes } from './routes/reports'
 import { adminRoutes } from './routes/admin'
 import { dashboardRoutes } from './routes/dashboard'
+import { costCenterRoutes } from './routes/costcenters'
 import { mainLayout } from './views/layout'
 import { loginPage } from './views/login'
 
@@ -28,6 +29,7 @@ app.route('/api/vouchers', voucherRoutes)
 app.route('/api/reports', reportRoutes)
 app.route('/api/admin', adminRoutes)
 app.route('/api/dashboard', dashboardRoutes)
+app.route('/api/cost-centers', costCenterRoutes)
 
 // ===== Pages =====
 app.get('/login', (c) => {

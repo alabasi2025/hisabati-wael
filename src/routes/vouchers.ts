@@ -101,6 +101,44 @@ voucherRoutes.post('/', async (c) => {
   }
 })
 
+// تعديل سند (draft only)
+voucherRoutes.put('/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    const v = await c.env.DB.prepare('SELECT * FROM vouchers WHERE id = ?').bind(id).first() as any
+    if (!v) return c.json({ success: false, message: 'السند غير موجود' }, 404)
+    if (v.status === 'posted') return c.json({ success: false, message: 'لا يمكن تعديل سند مرحّل' }, 400)
+
+    const body = await c.req.json()
+    const { voucher_date, account_id, amount, description, beneficiary, payment_method, check_number, check_date, bank_name, details } = body
+
+    if (!voucher_date || !account_id || !amount) {
+      return c.json({ success: false, message: 'يرجى ملء الحقول المطلوبة' }, 400)
+    }
+
+    await c.env.DB.prepare(`
+      UPDATE vouchers SET voucher_date=?, account_id=?, amount=?, description=?, beneficiary=?, payment_method=?, check_number=?, check_date=?, bank_name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
+    `).bind(voucher_date, account_id, amount, description || null, beneficiary || null, payment_method || 'cash', check_number || null, check_date || null, bank_name || null, id).run()
+
+    // Update details
+    await c.env.DB.prepare('DELETE FROM voucher_details WHERE voucher_id = ?').bind(id).run()
+    if (details && details.length > 0) {
+      for (let i = 0; i < details.length; i++) {
+        const d = details[i]
+        await c.env.DB.prepare(`
+          INSERT INTO voucher_details (voucher_id, line_number, account_id, amount, description) VALUES (?, ?, ?, ?, ?)
+        `).bind(id, i + 1, d.account_id, d.amount, d.description || null).run()
+      }
+    }
+
+    await c.env.DB.prepare('INSERT INTO audit_log (action, table_name, record_id, new_data) VALUES (?, ?, ?, ?)').bind('update', 'vouchers', id, JSON.stringify({ amount, description })).run()
+
+    return c.json({ success: true, message: 'تم تعديل السند بنجاح' })
+  } catch (e: any) {
+    return c.json({ success: false, message: e.message }, 500)
+  }
+})
+
 // ترحيل سند (إنشاء قيد تلقائي)
 voucherRoutes.post('/:id/post', async (c) => {
   try {
