@@ -9,6 +9,7 @@ export function mainLayout(): string {
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script>
     tailwind.config = {
       theme: {
@@ -22,39 +23,7 @@ export function mainLayout(): string {
       }
     }
   </script>
-  <style>
-    * { font-family: 'Tajawal', sans-serif; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #1e293b; }
-    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
-    .sidebar-link { transition: all 0.2s; }
-    .sidebar-link:hover { background: rgba(59,130,246,0.1); }
-    .sidebar-link.active { background: rgba(59,130,246,0.15); border-right: 3px solid #3b82f6; color: #60a5fa; }
-    .sidebar-group > .sidebar-children { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
-    .sidebar-group.open > .sidebar-children { max-height: 500px; }
-    .sidebar-group > button .chevron { transition: transform 0.3s; }
-    .sidebar-group.open > button .chevron { transform: rotate(90deg); }
-    .stat-card { transition: all 0.3s; }
-    .stat-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
-    .table-row { transition: background 0.15s; }
-    .table-row:hover { background: rgba(59,130,246,0.05); }
-    .modal-overlay { background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
-    .toast { animation: slideIn 0.3s ease; }
-    @keyframes slideIn { from { transform: translateX(100%); opacity:0; } to { transform: translateX(0); opacity:1; } }
-    .badge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
-    .badge-success { background: rgba(34,197,94,0.15); color: #22c55e; }
-    .badge-warning { background: rgba(234,179,8,0.15); color: #eab308; }
-    .badge-danger { background: rgba(239,68,68,0.15); color: #ef4444; }
-    .badge-info { background: rgba(59,130,246,0.15); color: #3b82f6; }
-    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
-    .print-only { display: none; }
-    @media print {
-      .no-print { display: none !important; }
-      .print-only { display: block !important; }
-      body { background: white !important; }
-    }
-  </style>
+  <link href="/static/css/style.css" rel="stylesheet">
 </head>
 <body class="bg-dark-950 text-gray-200 min-h-screen">
   <div class="flex min-h-screen">
@@ -63,25 +32,23 @@ export function mainLayout(): string {
       <!-- Logo -->
       <div class="p-4 border-b border-dark-700">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-primary-600 flex items-center justify-center">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-lg shadow-primary-500/20">
             <i class="fas fa-building-columns text-white text-lg"></i>
           </div>
           <div>
             <h1 class="font-bold text-white text-sm">النظام المحاسبي</h1>
-            <p class="text-[10px] text-gray-500">الإصدار 2.0</p>
+            <p class="text-[10px] text-gray-500">الإصدار 3.0</p>
           </div>
         </div>
       </div>
 
       <!-- Navigation -->
-      <nav class="flex-1 overflow-y-auto p-3 space-y-1" id="sidebarNav">
-        <!-- Will be populated by JS -->
-      </nav>
+      <nav class="flex-1 overflow-y-auto p-3 space-y-1" id="sidebarNav"></nav>
 
       <!-- User Info -->
       <div class="p-3 border-t border-dark-700">
-        <div class="flex items-center gap-3 p-2 rounded-xl hover:bg-dark-800 cursor-pointer" onclick="toggleUserMenu()">
-          <div class="w-9 h-9 rounded-full bg-primary-600 flex items-center justify-center">
+        <div class="flex items-center gap-3 p-2 rounded-xl hover:bg-dark-800 cursor-pointer transition" onclick="toggleUserMenu()">
+          <div class="w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-md" id="userAvatar">
             <i class="fas fa-user text-white text-sm"></i>
           </div>
           <div class="flex-1 min-w-0">
@@ -90,11 +57,15 @@ export function mainLayout(): string {
           </div>
           <i class="fas fa-ellipsis-v text-gray-500 text-xs"></i>
         </div>
-        <div id="userMenu" class="hidden mt-2 bg-dark-800 rounded-xl border border-dark-600 overflow-hidden">
-          <button onclick="navigate('/admin/settings')" class="w-full text-right px-4 py-2 text-sm text-gray-300 hover:bg-dark-700 flex items-center gap-2">
-            <i class="fas fa-cog w-4"></i> الإعدادات
+        <div id="userMenu" class="hidden mt-2 bg-dark-800 rounded-xl border border-dark-600 overflow-hidden shadow-xl">
+          <button onclick="navigate('/admin/settings')" class="w-full text-right px-4 py-2.5 text-sm text-gray-300 hover:bg-dark-700 flex items-center gap-2 transition">
+            <i class="fas fa-cog w-4 text-gray-500"></i> الإعدادات
           </button>
-          <button onclick="handleLogout()" class="w-full text-right px-4 py-2 text-sm text-red-400 hover:bg-dark-700 flex items-center gap-2">
+          <button onclick="navigate('/admin/users')" class="w-full text-right px-4 py-2.5 text-sm text-gray-300 hover:bg-dark-700 flex items-center gap-2 transition">
+            <i class="fas fa-users w-4 text-gray-500"></i> المستخدمين
+          </button>
+          <div class="border-t border-dark-700"></div>
+          <button onclick="handleLogout()" class="w-full text-right px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 flex items-center gap-2 transition">
             <i class="fas fa-sign-out-alt w-4"></i> تسجيل الخروج
           </button>
         </div>
@@ -107,7 +78,7 @@ export function mainLayout(): string {
       <header class="bg-dark-900/80 backdrop-blur-lg border-b border-dark-700 px-6 py-3 sticky top-0 z-20 no-print">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-4">
-            <button onclick="toggleSidebar()" class="text-gray-400 hover:text-white lg:hidden">
+            <button onclick="toggleSidebar()" class="text-gray-400 hover:text-white lg:hidden transition">
               <i class="fas fa-bars text-lg"></i>
             </button>
             <div id="breadcrumb" class="flex items-center gap-2 text-sm">
@@ -116,8 +87,24 @@ export function mainLayout(): string {
           </div>
           <div class="flex items-center gap-3">
             <span class="text-xs text-gray-500" id="currentDate"></span>
-            <span class="text-xs text-gray-500" id="fiscalYearBadge"></span>
-            <button onclick="window.print()" class="text-gray-400 hover:text-white p-2 rounded-lg hover:bg-dark-800" title="طباعة">
+            <span id="fiscalYearBadge"></span>
+            <!-- Notifications -->
+            <div class="relative" id="notifContainer">
+              <button onclick="toggleNotifications()" class="text-gray-400 hover:text-white p-2 rounded-lg hover:bg-dark-800 transition relative" title="الإشعارات">
+                <i class="fas fa-bell text-sm"></i>
+                <span id="notifBadge" class="hidden absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[9px] rounded-full flex items-center justify-center font-bold">0</span>
+              </button>
+              <div id="notifPanel" class="hidden absolute left-0 top-full mt-2 w-80 bg-dark-800 border border-dark-600 rounded-2xl shadow-2xl overflow-hidden z-50">
+                <div class="px-4 py-3 border-b border-dark-700 flex items-center justify-between">
+                  <span class="text-white font-bold text-sm">الإشعارات</span>
+                  <button onclick="clearNotifications()" class="text-gray-500 text-xs hover:text-gray-300 transition">مسح الكل</button>
+                </div>
+                <div id="notifList" class="max-h-64 overflow-y-auto">
+                  <div class="p-4 text-center text-gray-500 text-sm"><i class="fas fa-bell-slash text-2xl mb-2 block opacity-40"></i>لا توجد إشعارات</div>
+                </div>
+              </div>
+            </div>
+            <button onclick="window.print()" class="text-gray-400 hover:text-white p-2 rounded-lg hover:bg-dark-800 transition" title="طباعة">
               <i class="fas fa-print text-sm"></i>
             </button>
           </div>
@@ -125,9 +112,7 @@ export function mainLayout(): string {
       </header>
 
       <!-- Page Content -->
-      <div id="pageContent" class="p-6">
-        <!-- Dynamic content loads here -->
-      </div>
+      <div id="pageContent" class="p-6"></div>
     </main>
   </div>
 

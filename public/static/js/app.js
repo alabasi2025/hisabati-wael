@@ -1,13 +1,15 @@
 // ===================================================
-// النظام المحاسبي الحديث - Frontend Application v3.0
-// تحويل كامل من Oracle Forms
+// النظام المحاسبي الحديث - Frontend Application v4.0
+// تحويل كامل من Oracle Forms - المرحلة الرابعة
 // ===================================================
 
 const API = '/api';
+const APP_VERSION = '4.0';
 let currentUser = null;
 let menuItems = [];
 let accountsCache = [];
 let currenciesCache = [];
+let notifications = JSON.parse(localStorage.getItem('notifications') || '[]');
 
 // ===== Auth =====
 function getToken() { return localStorage.getItem('token'); }
@@ -30,7 +32,70 @@ async function apiFetch(url, options = {}) {
 function handleLogout() {
   localStorage.removeItem('token');
   localStorage.removeItem('user');
+  addNotification('تسجيل خروج', 'تم تسجيل خروجك من النظام', 'info');
   window.location.href = '/login';
+}
+
+// ===== Notifications System =====
+function addNotification(title, message, type = 'info') {
+  const notif = { id: Date.now(), title, message, type, time: new Date().toISOString(), read: false };
+  notifications.unshift(notif);
+  if (notifications.length > 50) notifications = notifications.slice(0, 50);
+  localStorage.setItem('notifications', JSON.stringify(notifications));
+  updateNotifBadge();
+}
+
+function updateNotifBadge() {
+  const unread = notifications.filter(n => !n.read).length;
+  const badge = document.getElementById('notifBadge');
+  if (badge) {
+    if (unread > 0) { badge.textContent = unread > 9 ? '9+' : unread; badge.classList.remove('hidden'); }
+    else badge.classList.add('hidden');
+  }
+}
+
+function toggleNotifications() {
+  const panel = document.getElementById('notifPanel');
+  panel.classList.toggle('hidden');
+  renderNotifList();
+  // Mark as read
+  notifications.forEach(n => n.read = true);
+  localStorage.setItem('notifications', JSON.stringify(notifications));
+  setTimeout(updateNotifBadge, 300);
+}
+
+function renderNotifList() {
+  const list = document.getElementById('notifList');
+  if (!list) return;
+  if (notifications.length === 0) {
+    list.innerHTML = '<div class="p-4 text-center text-gray-500 text-sm"><i class="fas fa-bell-slash text-2xl mb-2 block opacity-40"></i>لا توجد إشعارات</div>';
+    return;
+  }
+  const icons = { success: 'fa-check-circle text-green-400', error: 'fa-times-circle text-red-400', warning: 'fa-exclamation-triangle text-yellow-400', info: 'fa-info-circle text-blue-400' };
+  list.innerHTML = notifications.slice(0, 20).map(n => {
+    const ago = timeAgo(n.time);
+    return `<div class="px-4 py-3 hover:bg-dark-700/50 transition border-b border-dark-700/50 flex gap-3 ${n.read ? '' : 'bg-dark-700/20'}">
+      <i class="fas ${icons[n.type] || icons.info} mt-0.5"></i>
+      <div class="flex-1 min-w-0"><p class="text-gray-200 text-sm font-medium">${n.title}</p>
+      <p class="text-gray-500 text-xs truncate">${n.message}</p>
+      <p class="text-gray-600 text-[10px] mt-1">${ago}</p></div>
+    </div>`;
+  }).join('');
+}
+
+function clearNotifications() {
+  notifications = [];
+  localStorage.setItem('notifications', JSON.stringify(notifications));
+  updateNotifBadge();
+  renderNotifList();
+}
+
+function timeAgo(dateStr) {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (diff < 60) return 'الآن';
+  if (diff < 3600) return `منذ ${Math.floor(diff/60)} دقيقة`;
+  if (diff < 86400) return `منذ ${Math.floor(diff/3600)} ساعة`;
+  return `منذ ${Math.floor(diff/86400)} يوم`;
 }
 
 function toggleUserMenu() {
@@ -55,6 +120,10 @@ function showToast(message, type = 'success') {
   toast.innerHTML = `<i class="fas ${icons[type]}"></i><span class="flex-1 text-sm">${message}</span><button onclick="this.parentElement.remove()" class="text-white/70 hover:text-white"><i class="fas fa-times"></i></button>`;
   container.appendChild(toast);
   setTimeout(() => toast.remove(), 4000);
+  // Also add as notification for important messages
+  if (type === 'success' && message.includes('تم')) {
+    addNotification('عملية ناجحة', message, 'success');
+  }
 }
 
 // ===== Confirm Dialog =====
@@ -1103,8 +1172,9 @@ async function renderTrialBalance(el) {
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-bold text-white"><i class="fas fa-balance-scale ml-2 text-purple-400"></i>ميزان المراجعة</h2>
       <div class="flex gap-2">
+        <button onclick="exportTableExcel('trialBalanceTable','ميزان_المراجعة','ميزان المراجعة')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-excel ml-1 text-green-400"></i> Excel</button>
         <button onclick="exportTableCSV('trialBalanceTable','ميزان_المراجعة')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-csv ml-1"></i> CSV</button>
-        <button onclick="window.print()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button>
+        <button onclick="printTrialBalance()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button>
       </div>
     </div>
     <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 mb-4">
@@ -1168,7 +1238,8 @@ async function renderAccountStatement(el) {
         ${inputField('stmtFrom', 'من تاريخ', 'date')} ${inputField('stmtTo', 'إلى تاريخ', 'date', todayStr())}
         <div class="flex items-end gap-2">
           <button onclick="loadAccountStatement()" class="bg-primary-600 hover:bg-primary-700 text-white px-6 py-2.5 rounded-xl text-sm flex-1 transition">عرض</button>
-          <button onclick="exportTableCSV('stmtTable','كشف_حساب')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2.5 rounded-xl text-sm"><i class="fas fa-file-csv"></i></button>
+          <button onclick="exportTableExcel('stmtTable','كشف_حساب','كشف حساب')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2.5 rounded-xl text-sm" title="Excel"><i class="fas fa-file-excel text-green-400"></i></button>
+          <button onclick="exportTableCSV('stmtTable','كشف_حساب')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2.5 rounded-xl text-sm" title="CSV"><i class="fas fa-file-csv"></i></button>
         </div>
       </div>
     </div><div id="stmtResult"></div>`;
@@ -1225,8 +1296,9 @@ async function renderIncomeStatement(el) {
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-bold text-white"><i class="fas fa-chart-line ml-2 text-green-400"></i>قائمة الدخل</h2>
       <div class="flex gap-2">
+        <button onclick="exportTableExcel('incomeTable','قائمة_الدخل','قائمة الدخل')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-excel ml-1 text-green-400"></i> Excel</button>
         <button onclick="exportTableCSV('incomeTable','قائمة_الدخل')" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-csv"></i></button>
-        <button onclick="window.print()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button>
+        <button onclick="printIncomeStatement()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button>
       </div>
     </div>
     <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 mb-4">
@@ -1281,7 +1353,7 @@ async function renderBalanceSheet(el) {
   el.innerHTML = `
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-bold text-white"><i class="fas fa-file-alt ml-2 text-blue-400"></i>الميزانية العمومية</h2>
-      <div class="flex gap-2"><button onclick="window.print()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button></div>
+      <div class="flex gap-2"><button onclick="exportBalanceSheetExcel()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-excel ml-1 text-green-400"></i> Excel</button><button onclick="exportBalanceSheetCSV()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-file-csv ml-1"></i> CSV</button><button onclick="printBalanceSheet()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-3 py-2 rounded-xl text-sm"><i class="fas fa-print ml-1"></i> طباعة</button></div>
     </div>
     <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 mb-4">
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1515,30 +1587,396 @@ async function saveUserPermissions(userId) {
   if (res.success) { showToast(res.message); closeModal(); } else showToast(res.message, 'error');
 }
 
-// -- Settings --
+// -- Settings (شاشة إعدادات شاملة) --
+let settingsActiveTab = 'company';
+
 async function renderSettings(el) {
   const res = await apiFetch('/admin/settings');
   if (!res.success) return;
   const s = {}; res.data.forEach(item => s[item.key] = item.value);
+  window._currentSettings = s;
+
   el.innerHTML = `
-    <div class="mb-6"><h2 class="text-2xl font-bold text-white"><i class="fas fa-sliders-h ml-2 text-gray-400"></i>إعدادات النظام</h2></div>
-    <div class="max-w-2xl"><div class="bg-dark-800 rounded-2xl border border-dark-700 p-6 space-y-5">
-      <h3 class="text-white font-bold border-b border-dark-700 pb-3"><i class="fas fa-building ml-2 text-primary-400"></i>معلومات الشركة</h3>
-      ${inputField('setCompanyName', 'اسم الشركة', 'text', s.company_name || '')}
-      ${inputField('setCompanyNameEn', 'اسم الشركة (إنجليزي)', 'text', s.company_name_en || '')}
-      <h3 class="text-white font-bold border-b border-dark-700 pb-3 pt-3"><i class="fas fa-cogs ml-2 text-primary-400"></i>إعدادات مالية</h3>
-      <div class="grid grid-cols-2 gap-4">
-        ${inputField('setDecimals', 'الخانات العشرية', 'number', s.decimal_places || '2')}
-        ${selectField('setAutoPost', 'ترحيل السندات تلقائياً', [{value:'0',text:'لا'},{value:'1',text:'نعم'}], s.voucher_auto_post || '0')}
-      </div>
-      <button onclick="saveSettings()" class="bg-primary-600 hover:bg-primary-700 text-white px-6 py-2.5 rounded-xl text-sm transition w-full"><i class="fas fa-save ml-1"></i> حفظ الإعدادات</button>
-    </div></div>`;
+    <div class="mb-6">
+      <h2 class="text-2xl font-bold text-white"><i class="fas fa-sliders-h ml-2 text-gray-400"></i>إعدادات النظام</h2>
+      <p class="text-gray-500 text-sm mt-1">إدارة إعدادات الشركة والنظام المالي</p>
+    </div>
+
+    <!-- Settings Tabs -->
+    <div class="flex gap-1 mb-6 bg-dark-800 p-1 rounded-2xl border border-dark-700 overflow-x-auto">
+      <button onclick="switchSettingsTab('company')" id="tab-company" class="settings-tab flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition whitespace-nowrap">
+        <i class="fas fa-building"></i> الشركة
+      </button>
+      <button onclick="switchSettingsTab('financial')" id="tab-financial" class="settings-tab flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition whitespace-nowrap">
+        <i class="fas fa-calculator"></i> مالية
+      </button>
+      <button onclick="switchSettingsTab('numbering')" id="tab-numbering" class="settings-tab flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition whitespace-nowrap">
+        <i class="fas fa-hashtag"></i> الترقيم
+      </button>
+      <button onclick="switchSettingsTab('printing')" id="tab-printing" class="settings-tab flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition whitespace-nowrap">
+        <i class="fas fa-print"></i> الطباعة
+      </button>
+      <button onclick="switchSettingsTab('system')" id="tab-system" class="settings-tab flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition whitespace-nowrap">
+        <i class="fas fa-server"></i> النظام
+      </button>
+    </div>
+
+    <!-- Tab Content -->
+    <div id="settingsContent"></div>`;
+
+  switchSettingsTab(settingsActiveTab);
 }
 
-async function saveSettings() {
-  const data = { company_name: document.getElementById('setCompanyName').value, company_name_en: document.getElementById('setCompanyNameEn').value, decimal_places: document.getElementById('setDecimals').value, voucher_auto_post: document.getElementById('setAutoPost').value };
+function switchSettingsTab(tab) {
+  settingsActiveTab = tab;
+  document.querySelectorAll('.settings-tab').forEach(t => {
+    t.classList.remove('bg-primary-600', 'text-white', 'shadow-lg');
+    t.classList.add('text-gray-400', 'hover:text-gray-200', 'hover:bg-dark-700');
+  });
+  const activeBtn = document.getElementById(`tab-${tab}`);
+  if (activeBtn) {
+    activeBtn.classList.add('bg-primary-600', 'text-white', 'shadow-lg');
+    activeBtn.classList.remove('text-gray-400', 'hover:text-gray-200', 'hover:bg-dark-700');
+  }
+  const s = window._currentSettings || {};
+  const el = document.getElementById('settingsContent');
+
+  switch (tab) {
+    case 'company':
+      el.innerHTML = `
+        <div class="max-w-3xl mx-auto">
+          <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-dark-700 bg-dark-900/50">
+              <h3 class="text-white font-bold"><i class="fas fa-building ml-2 text-primary-400"></i>معلومات الشركة</h3>
+              <p class="text-gray-500 text-xs mt-1">البيانات الأساسية للشركة التي تظهر في التقارير والطباعة</p>
+            </div>
+            <div class="p-6 space-y-5">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                ${inputField('setCompanyName', 'اسم الشركة (عربي) *', 'text', s.company_name || '')}
+                ${inputField('setCompanyNameEn', 'اسم الشركة (إنجليزي)', 'text', s.company_name_en || '')}
+              </div>
+              ${inputField('setCompanyAddress', 'العنوان', 'text', s.company_address || '')}
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                ${inputField('setCompanyPhone', 'رقم الهاتف', 'tel', s.company_phone || '')}
+                ${inputField('setCompanyEmail', 'البريد الإلكتروني', 'email', s.company_email || '')}
+                ${inputField('setCompanyWebsite', 'الموقع الإلكتروني', 'url', s.company_website || '')}
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                ${inputField('setCompanyTaxNo', 'الرقم الضريبي', 'text', s.tax_number || '')}
+                ${inputField('setCompanyRegNo', 'رقم السجل التجاري', 'text', s.registration_number || '')}
+              </div>
+              ${textareaField('setCompanyNotes', 'ملاحظات إضافية (تظهر في ذيل التقارير)', s.company_notes || '', 2)}
+            </div>
+          </div>
+          <div class="mt-4 flex justify-end">
+            <button onclick="saveAllSettings()" class="bg-primary-600 hover:bg-primary-700 text-white px-8 py-2.5 rounded-xl text-sm transition flex items-center gap-2"><i class="fas fa-save"></i> حفظ الإعدادات</button>
+          </div>
+        </div>`;
+      break;
+
+    case 'financial':
+      el.innerHTML = `
+        <div class="max-w-3xl mx-auto">
+          <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-dark-700 bg-dark-900/50">
+              <h3 class="text-white font-bold"><i class="fas fa-calculator ml-2 text-green-400"></i>الإعدادات المالية</h3>
+              <p class="text-gray-500 text-xs mt-1">ضبط السلوك المالي للنظام</p>
+            </div>
+            <div class="p-6 space-y-5">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                ${selectField('setDefaultCurrency', 'العملة الأساسية', [{value:'IQD',text:'دينار عراقي (IQD)'},{value:'USD',text:'دولار أمريكي (USD)'},{value:'EUR',text:'يورو (EUR)'},{value:'SAR',text:'ريال سعودي (SAR)'}], s.default_currency || 'IQD')}
+                ${inputField('setDecimals', 'الخانات العشرية', 'number', s.decimal_places || '2', 'min="0" max="6"')}
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                ${selectField('setAutoPost', 'ترحيل السندات تلقائياً', [{value:'0',text:'لا - يتطلب ترحيل يدوي'},{value:'1',text:'نعم - ترحيل عند الإنشاء'}], s.voucher_auto_post || '0')}
+                ${selectField('setAutoPostJournal', 'ترحيل القيود تلقائياً', [{value:'0',text:'لا - حفظ كمسودة'},{value:'1',text:'نعم - ترحيل عند الإنشاء'}], s.journal_auto_post || '0')}
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                ${selectField('setBalanceValidation', 'فحص توازن القيد', [{value:'strict',text:'صارم - لا يسمح بقيد غير متوازن'},{value:'warn',text:'تحذير فقط'},{value:'none',text:'بدون فحص'}], s.balance_validation || 'strict')}
+                ${selectField('setNegativeBalance', 'السماح بالأرصدة السالبة', [{value:'0',text:'لا - رفض العملية'},{value:'1',text:'نعم - تحذير فقط'}], s.allow_negative_balance || '0')}
+              </div>
+              <div class="bg-dark-900/50 rounded-xl p-4 border border-dark-700">
+                <h4 class="text-white font-medium text-sm mb-3"><i class="fas fa-lock-open ml-2 text-yellow-400"></i>حسابات افتراضية</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  ${inputField('setDefaultCashAccount', 'حساب الصندوق الافتراضي (رمز)', 'text', s.default_cash_account || '111')}
+                  ${inputField('setDefaultBankAccount', 'حساب البنك الافتراضي (رمز)', 'text', s.default_bank_account || '112')}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 flex justify-end">
+            <button onclick="saveAllSettings()" class="bg-primary-600 hover:bg-primary-700 text-white px-8 py-2.5 rounded-xl text-sm transition flex items-center gap-2"><i class="fas fa-save"></i> حفظ الإعدادات</button>
+          </div>
+        </div>`;
+      break;
+
+    case 'numbering':
+      el.innerHTML = `
+        <div class="max-w-3xl mx-auto">
+          <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-dark-700 bg-dark-900/50">
+              <h3 class="text-white font-bold"><i class="fas fa-hashtag ml-2 text-blue-400"></i>إعدادات الترقيم التلقائي</h3>
+              <p class="text-gray-500 text-xs mt-1">ضبط نمط ترقيم القيود والسندات</p>
+            </div>
+            <div class="p-6 space-y-5">
+              <div class="bg-dark-900/50 rounded-xl p-4 border border-dark-700">
+                <h4 class="text-white font-medium text-sm mb-3"><i class="fas fa-book ml-2 text-blue-400"></i>ترقيم القيود</h4>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  ${inputField('setJePrefix', 'بادئة القيد', 'text', s.journal_prefix || '', 'placeholder="JE-"')}
+                  ${selectField('setJeNumbering', 'نوع الترقيم', [{value:'sequential',text:'تسلسلي مستمر'},{value:'yearly',text:'يبدأ من 1 كل سنة'},{value:'monthly',text:'يبدأ من 1 كل شهر'}], s.journal_numbering || 'sequential')}
+                  ${inputField('setJeDigits', 'عدد الخانات', 'number', s.journal_digits || '4', 'min="1" max="10"')}
+                </div>
+                <p class="text-gray-500 text-xs mt-2">مثال: <span class="text-primary-400 font-mono" id="jeNumPreview"></span></p>
+              </div>
+
+              <div class="bg-dark-900/50 rounded-xl p-4 border border-dark-700">
+                <h4 class="text-white font-medium text-sm mb-3"><i class="fas fa-hand-holding-usd ml-2 text-green-400"></i>ترقيم سندات القبض</h4>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  ${inputField('setRvPrefix', 'بادئة سند القبض', 'text', s.receipt_prefix || '', 'placeholder="RV-"')}
+                  ${selectField('setRvNumbering', 'نوع الترقيم', [{value:'sequential',text:'تسلسلي مستمر'},{value:'yearly',text:'يبدأ من 1 كل سنة'}], s.receipt_numbering || 'sequential')}
+                  ${inputField('setRvDigits', 'عدد الخانات', 'number', s.receipt_digits || '4', 'min="1" max="10"')}
+                </div>
+              </div>
+
+              <div class="bg-dark-900/50 rounded-xl p-4 border border-dark-700">
+                <h4 class="text-white font-medium text-sm mb-3"><i class="fas fa-money-bill-wave ml-2 text-red-400"></i>ترقيم سندات الصرف</h4>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  ${inputField('setPvPrefix', 'بادئة سند الصرف', 'text', s.payment_prefix || '', 'placeholder="PV-"')}
+                  ${selectField('setPvNumbering', 'نوع الترقيم', [{value:'sequential',text:'تسلسلي مستمر'},{value:'yearly',text:'يبدأ من 1 كل سنة'}], s.payment_numbering || 'sequential')}
+                  ${inputField('setPvDigits', 'عدد الخانات', 'number', s.payment_digits || '4', 'min="1" max="10"')}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 flex justify-end">
+            <button onclick="saveAllSettings()" class="bg-primary-600 hover:bg-primary-700 text-white px-8 py-2.5 rounded-xl text-sm transition flex items-center gap-2"><i class="fas fa-save"></i> حفظ الإعدادات</button>
+          </div>
+        </div>`;
+      updateNumberPreview();
+      break;
+
+    case 'printing':
+      el.innerHTML = `
+        <div class="max-w-3xl mx-auto">
+          <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-dark-700 bg-dark-900/50">
+              <h3 class="text-white font-bold"><i class="fas fa-print ml-2 text-purple-400"></i>إعدادات الطباعة</h3>
+              <p class="text-gray-500 text-xs mt-1">تخصيص مظهر التقارير والسندات المطبوعة</p>
+            </div>
+            <div class="p-6 space-y-5">
+              <div class="bg-dark-900/50 rounded-xl p-4 border border-dark-700">
+                <h4 class="text-white font-medium text-sm mb-3"><i class="fas fa-file-alt ml-2 text-purple-400"></i>رأس التقارير</h4>
+                ${inputField('setPrintHeader1', 'السطر الأول (اسم الشركة)', 'text', s.print_header_1 || s.company_name || '')}
+                ${inputField('setPrintHeader2', 'السطر الثاني (العنوان)', 'text', s.print_header_2 || s.company_address || '')}
+                ${inputField('setPrintHeader3', 'السطر الثالث (معلومات إضافية)', 'text', s.print_header_3 || '')}
+              </div>
+
+              <div class="bg-dark-900/50 rounded-xl p-4 border border-dark-700">
+                <h4 class="text-white font-medium text-sm mb-3"><i class="fas fa-shoe-prints ml-2 text-purple-400"></i>ذيل التقارير</h4>
+                ${inputField('setPrintFooter', 'نص الذيل', 'text', s.print_footer || '')}
+              </div>
+
+              <div class="bg-dark-900/50 rounded-xl p-4 border border-dark-700">
+                <h4 class="text-white font-medium text-sm mb-3"><i class="fas fa-signature ml-2 text-purple-400"></i>التوقيعات</h4>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  ${inputField('setPrintSig1', 'التوقيع الأول', 'text', s.print_signature_1 || 'المحاسب')}
+                  ${inputField('setPrintSig2', 'التوقيع الثاني', 'text', s.print_signature_2 || 'المدقق')}
+                  ${inputField('setPrintSig3', 'التوقيع الثالث', 'text', s.print_signature_3 || 'المدير المالي')}
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                ${selectField('setPrintPageSize', 'حجم الورق', [{value:'A4',text:'A4'},{value:'A5',text:'A5'},{value:'Letter',text:'Letter'}], s.print_page_size || 'A4')}
+                ${selectField('setPrintOrientation', 'اتجاه الطباعة', [{value:'portrait',text:'عمودي (Portrait)'},{value:'landscape',text:'أفقي (Landscape)'}], s.print_orientation || 'portrait')}
+              </div>
+
+              <label class="flex items-center gap-2 text-gray-400 text-sm cursor-pointer hover:text-gray-300">
+                <input type="checkbox" id="setPrintShowLogo" ${(s.print_show_logo === '1' || !s.print_show_logo) ? 'checked' : ''} class="rounded bg-dark-900 border-dark-600">
+                عرض شعار الشركة في التقارير
+              </label>
+              <label class="flex items-center gap-2 text-gray-400 text-sm cursor-pointer hover:text-gray-300">
+                <input type="checkbox" id="setPrintShowSignatures" ${(s.print_show_signatures === '1' || !s.print_show_signatures) ? 'checked' : ''} class="rounded bg-dark-900 border-dark-600">
+                عرض حقول التوقيع في الطباعة
+              </label>
+            </div>
+          </div>
+
+          <!-- Print Preview -->
+          <div class="mt-4 bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-dark-700 flex items-center justify-between">
+              <h3 class="text-white font-bold text-sm"><i class="fas fa-eye ml-2 text-gray-400"></i>معاينة</h3>
+              <button onclick="testPrint()" class="text-primary-400 hover:text-primary-300 text-xs"><i class="fas fa-print ml-1"></i> طباعة تجريبية</button>
+            </div>
+            <div class="p-6">
+              <div class="bg-white text-black rounded-xl p-8 max-w-md mx-auto text-center" style="font-family:Tajawal,sans-serif" dir="rtl">
+                <h3 class="text-lg font-bold mb-1" id="previewHeader1">${s.print_header_1 || s.company_name || 'اسم الشركة'}</h3>
+                <p class="text-sm text-gray-500 mb-0" id="previewHeader2">${s.print_header_2 || s.company_address || 'العنوان'}</p>
+                <p class="text-xs text-gray-400 mb-3" id="previewHeader3">${s.print_header_3 || ''}</p>
+                <hr class="border-t-2 border-black mb-3">
+                <p class="text-sm font-bold mb-2">عنوان التقرير</p>
+                <p class="text-xs text-gray-500">محتوى التقرير...</p>
+                <hr class="border-t border-gray-300 my-3">
+                <div class="grid grid-cols-3 gap-4 text-xs mt-6">
+                  <div class="border-t border-black pt-1" id="previewSig1">${s.print_signature_1 || 'المحاسب'}</div>
+                  <div class="border-t border-black pt-1" id="previewSig2">${s.print_signature_2 || 'المدقق'}</div>
+                  <div class="border-t border-black pt-1" id="previewSig3">${s.print_signature_3 || 'المدير المالي'}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4 flex justify-end">
+            <button onclick="saveAllSettings()" class="bg-primary-600 hover:bg-primary-700 text-white px-8 py-2.5 rounded-xl text-sm transition flex items-center gap-2"><i class="fas fa-save"></i> حفظ الإعدادات</button>
+          </div>
+        </div>`;
+      // Live preview updates
+      ['setPrintHeader1','setPrintHeader2','setPrintHeader3','setPrintSig1','setPrintSig2','setPrintSig3'].forEach(id => {
+        const preview = id.replace('set','preview').replace('Print','');
+        document.getElementById(id)?.addEventListener('input', function() {
+          const target = document.getElementById(preview);
+          if (target) target.textContent = this.value || '';
+        });
+      });
+      break;
+
+    case 'system':
+      el.innerHTML = `
+        <div class="max-w-3xl mx-auto">
+          <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-dark-700 bg-dark-900/50">
+              <h3 class="text-white font-bold"><i class="fas fa-server ml-2 text-orange-400"></i>إعدادات النظام</h3>
+              <p class="text-gray-500 text-xs mt-1">إعدادات عامة للنظام والأمان</p>
+            </div>
+            <div class="p-6 space-y-5">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                ${selectField('setLanguage', 'اللغة الافتراضية', [{value:'ar',text:'العربية'},{value:'en',text:'English'}], s.default_language || 'ar')}
+                ${selectField('setDateFormat', 'تنسيق التاريخ', [{value:'yyyy-mm-dd',text:'2026-04-07 (ISO)'},{value:'dd/mm/yyyy',text:'07/04/2026'},{value:'dd-mm-yyyy',text:'07-04-2026'}], s.date_format || 'yyyy-mm-dd')}
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                ${inputField('setSessionTimeout', 'مدة الجلسة (بالساعات)', 'number', s.session_timeout || '24', 'min="1" max="720"')}
+                ${inputField('setMaxLoginAttempts', 'أقصى محاولات دخول فاشلة', 'number', s.max_login_attempts || '5', 'min="1" max="20"')}
+              </div>
+
+              <div class="bg-dark-900/50 rounded-xl p-4 border border-dark-700">
+                <h4 class="text-white font-medium text-sm mb-3"><i class="fas fa-shield-alt ml-2 text-orange-400"></i>الأمان</h4>
+                <div class="space-y-3">
+                  <label class="flex items-center gap-2 text-gray-400 text-sm cursor-pointer hover:text-gray-300">
+                    <input type="checkbox" id="setRequireStrongPass" ${s.require_strong_password === '1' ? 'checked' : ''} class="rounded bg-dark-900 border-dark-600">
+                    فرض كلمة مرور قوية (أحرف كبيرة وصغيرة وأرقام)
+                  </label>
+                  <label class="flex items-center gap-2 text-gray-400 text-sm cursor-pointer hover:text-gray-300">
+                    <input type="checkbox" id="setAuditEnabled" ${(s.audit_enabled === '1' || !s.audit_enabled) ? 'checked' : ''} class="rounded bg-dark-900 border-dark-600">
+                    تفعيل سجل التدقيق (تسجيل كل العمليات)
+                  </label>
+                  <label class="flex items-center gap-2 text-gray-400 text-sm cursor-pointer hover:text-gray-300">
+                    <input type="checkbox" id="setIpRestriction" ${s.ip_restriction === '1' ? 'checked' : ''} class="rounded bg-dark-900 border-dark-600">
+                    تقييد الدخول بعناوين IP محددة
+                  </label>
+                </div>
+              </div>
+
+              <div class="bg-dark-900/50 rounded-xl p-4 border border-dark-700">
+                <h4 class="text-white font-medium text-sm mb-3"><i class="fas fa-database ml-2 text-orange-400"></i>معلومات النظام</h4>
+                <div class="grid grid-cols-2 gap-y-2 text-sm">
+                  <span class="text-gray-500">إصدار النظام:</span><span class="text-gray-200 font-mono">${APP_VERSION}</span>
+                  <span class="text-gray-500">آخر تحديث:</span><span class="text-gray-200">${new Date().toLocaleDateString('ar-IQ')}</span>
+                  <span class="text-gray-500">بيئة العمل:</span><span class="text-gray-200">Cloudflare Workers + D1</span>
+                  <span class="text-gray-500">الخادم:</span><span class="text-gray-200">Hono v4</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 flex justify-end gap-3">
+            <button onclick="resetSettingsConfirm()" class="bg-red-600/20 hover:bg-red-600/30 text-red-400 px-6 py-2.5 rounded-xl text-sm transition flex items-center gap-2"><i class="fas fa-undo"></i> استعادة الافتراضي</button>
+            <button onclick="saveAllSettings()" class="bg-primary-600 hover:bg-primary-700 text-white px-8 py-2.5 rounded-xl text-sm transition flex items-center gap-2"><i class="fas fa-save"></i> حفظ الإعدادات</button>
+          </div>
+        </div>`;
+      break;
+  }
+}
+
+function updateNumberPreview() {
+  const prefix = document.getElementById('setJePrefix')?.value || '';
+  const digits = parseInt(document.getElementById('setJeDigits')?.value || 4);
+  const num = '1'.padStart(digits, '0');
+  const preview = document.getElementById('jeNumPreview');
+  if (preview) preview.textContent = `${prefix}${num}`;
+}
+
+function testPrint() {
+  const h1 = document.getElementById('setPrintHeader1')?.value || 'اسم الشركة';
+  const h2 = document.getElementById('setPrintHeader2')?.value || '';
+  const s1 = document.getElementById('setPrintSig1')?.value || 'المحاسب';
+  const s2 = document.getElementById('setPrintSig2')?.value || 'المدقق';
+  const s3 = document.getElementById('setPrintSig3')?.value || 'المدير المالي';
+  printReport('طباعة تجريبية', `
+    <p style="text-align:center;font-size:12pt;margin:30px 0;">هذه طباعة تجريبية للتحقق من إعدادات الطباعة</p>
+    <table><thead><tr><th>الحساب</th><th>مدين</th><th>دائن</th></tr></thead>
+    <tbody><tr><td>الصندوق</td><td style="text-align:left">1,000,000</td><td></td></tr>
+    <tr><td>رأس المال</td><td></td><td style="text-align:left">1,000,000</td></tr>
+    <tr class="total-row"><td>المجموع</td><td style="text-align:left">1,000,000</td><td style="text-align:left">1,000,000</td></tr></tbody></table>`);
+}
+
+function resetSettingsConfirm() {
+  showConfirm('استعادة الإعدادات الافتراضية', 'سيتم إعادة جميع الإعدادات إلى قيمها الافتراضية. هل أنت متأكد؟', async () => {
+    window._currentSettings = {};
+    switchSettingsTab(settingsActiveTab);
+    showToast('تم استعادة الإعدادات الافتراضية - اضغط حفظ لتأكيد', 'info');
+  });
+}
+
+async function saveAllSettings() {
+  const data = {};
+  // Collect all visible settings fields
+  const fields = {
+    // Company tab
+    'company_name': 'setCompanyName', 'company_name_en': 'setCompanyNameEn',
+    'company_address': 'setCompanyAddress', 'company_phone': 'setCompanyPhone',
+    'company_email': 'setCompanyEmail', 'company_website': 'setCompanyWebsite',
+    'tax_number': 'setCompanyTaxNo', 'registration_number': 'setCompanyRegNo',
+    'company_notes': 'setCompanyNotes',
+    // Financial tab
+    'default_currency': 'setDefaultCurrency', 'decimal_places': 'setDecimals',
+    'voucher_auto_post': 'setAutoPost', 'journal_auto_post': 'setAutoPostJournal',
+    'balance_validation': 'setBalanceValidation', 'allow_negative_balance': 'setNegativeBalance',
+    'default_cash_account': 'setDefaultCashAccount', 'default_bank_account': 'setDefaultBankAccount',
+    // Numbering tab
+    'journal_prefix': 'setJePrefix', 'journal_numbering': 'setJeNumbering', 'journal_digits': 'setJeDigits',
+    'receipt_prefix': 'setRvPrefix', 'receipt_numbering': 'setRvNumbering', 'receipt_digits': 'setRvDigits',
+    'payment_prefix': 'setPvPrefix', 'payment_numbering': 'setPvNumbering', 'payment_digits': 'setPvDigits',
+    // Printing tab
+    'print_header_1': 'setPrintHeader1', 'print_header_2': 'setPrintHeader2', 'print_header_3': 'setPrintHeader3',
+    'print_footer': 'setPrintFooter', 'print_signature_1': 'setPrintSig1', 'print_signature_2': 'setPrintSig2', 'print_signature_3': 'setPrintSig3',
+    'print_page_size': 'setPrintPageSize', 'print_orientation': 'setPrintOrientation',
+    // System tab
+    'default_language': 'setLanguage', 'date_format': 'setDateFormat',
+    'session_timeout': 'setSessionTimeout', 'max_login_attempts': 'setMaxLoginAttempts'
+  };
+
+  const checkboxFields = {
+    'print_show_logo': 'setPrintShowLogo', 'print_show_signatures': 'setPrintShowSignatures',
+    'require_strong_password': 'setRequireStrongPass', 'audit_enabled': 'setAuditEnabled', 'ip_restriction': 'setIpRestriction'
+  };
+
+  for (const [key, id] of Object.entries(fields)) {
+    const el = document.getElementById(id);
+    if (el) data[key] = el.value;
+  }
+  for (const [key, id] of Object.entries(checkboxFields)) {
+    const el = document.getElementById(id);
+    if (el) data[key] = el.checked ? '1' : '0';
+  }
+
+  // Merge with existing settings to avoid losing data from other tabs
+  Object.assign(window._currentSettings || {}, data);
+
   const res = await apiFetch('/admin/settings', { method: 'PUT', body: JSON.stringify(data) });
-  if (res.success) showToast('تم حفظ الإعدادات بنجاح'); else showToast(res.message, 'error');
+  if (res.success) {
+    showToast('تم حفظ الإعدادات بنجاح');
+    addNotification('إعدادات النظام', 'تم تحديث إعدادات النظام بنجاح', 'success');
+  } else {
+    showToast(res.message || 'خطأ في الحفظ', 'error');
+  }
 }
 
 // -- Currencies --
@@ -1657,35 +2095,48 @@ function closeFiscalYear(id, year) {
 // -- Audit Log --
 async function renderAuditLog(el) {
   const res = await apiFetch('/admin/audit-log?limit=100');
-  const actionLabels = { 'create': { text: 'إنشاء', icon: 'fa-plus-circle', color: 'text-green-400' }, 'update': { text: 'تعديل', icon: 'fa-edit', color: 'text-blue-400' }, 'delete': { text: 'حذف', icon: 'fa-trash', color: 'text-red-400' }, 'post': { text: 'ترحيل', icon: 'fa-check-circle', color: 'text-emerald-400' }, 'activate': { text: 'تفعيل', icon: 'fa-power-off', color: 'text-yellow-400' }, 'close': { text: 'إغلاق', icon: 'fa-lock', color: 'text-red-400' } };
+  const actionLabels = { 'create': { text: 'إنشاء', icon: 'fa-plus-circle', color: 'text-green-400', bg: 'bg-green-500/10' }, 'update': { text: 'تعديل', icon: 'fa-edit', color: 'text-blue-400', bg: 'bg-blue-500/10' }, 'delete': { text: 'حذف', icon: 'fa-trash', color: 'text-red-400', bg: 'bg-red-500/10' }, 'post': { text: 'ترحيل', icon: 'fa-check-circle', color: 'text-emerald-400', bg: 'bg-emerald-500/10' }, 'activate': { text: 'تفعيل', icon: 'fa-power-off', color: 'text-yellow-400', bg: 'bg-yellow-500/10' }, 'close': { text: 'إغلاق', icon: 'fa-lock', color: 'text-red-400', bg: 'bg-red-500/10' } };
   const tableLabels = { 'accounts': 'دليل الحسابات', 'journal_entries': 'القيود', 'vouchers': 'السندات', 'users': 'المستخدمين', 'currencies': 'العملات', 'fiscal_years': 'السنوات المالية', 'settings': 'الإعدادات', 'cost_centers': 'مراكز التكلفة', 'user_permissions': 'الصلاحيات' };
   el.innerHTML = `
-    <div class="flex items-center justify-between mb-6"><div><h2 class="text-2xl font-bold text-white"><i class="fas fa-history ml-2 text-gray-400"></i>سجل النشاطات</h2><p class="text-gray-500 text-sm mt-1">تتبع جميع العمليات</p></div></div>
+    <div class="flex items-center justify-between mb-6">
+      <div><h2 class="text-2xl font-bold text-white"><i class="fas fa-history ml-2 text-gray-400"></i>سجل النشاطات</h2><p class="text-gray-500 text-sm mt-1">تتبع جميع العمليات على النظام</p></div>
+      <button onclick="exportAuditCSV()" class="bg-dark-700 hover:bg-dark-600 text-gray-300 px-4 py-2 rounded-xl text-sm transition"><i class="fas fa-file-csv ml-1"></i> تصدير CSV</button>
+    </div>
     <div class="bg-dark-800 rounded-2xl border border-dark-700 p-4 mb-4">
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <select id="auditTableFilter" onchange="filterAuditLog()" class="bg-dark-900 border border-dark-600 text-gray-200 rounded-xl px-3 py-2 text-sm outline-none">
           <option value="">كل الجداول</option><option value="accounts">دليل الحسابات</option><option value="journal_entries">القيود</option><option value="vouchers">السندات</option>
-          <option value="users">المستخدمين</option><option value="currencies">العملات</option><option value="settings">الإعدادات</option></select>
+          <option value="users">المستخدمين</option><option value="currencies">العملات</option><option value="settings">الإعدادات</option><option value="cost_centers">مراكز التكلفة</option></select>
         <select id="auditActionFilter" onchange="filterAuditLog()" class="bg-dark-900 border border-dark-600 text-gray-200 rounded-xl px-3 py-2 text-sm outline-none">
-          <option value="">كل العمليات</option><option value="create">إنشاء</option><option value="update">تعديل</option><option value="delete">حذف</option><option value="post">ترحيل</option></select>
+          <option value="">كل العمليات</option><option value="create">إنشاء</option><option value="update">تعديل</option><option value="delete">حذف</option><option value="post">ترحيل</option><option value="activate">تفعيل</option><option value="close">إغلاق</option></select>
         <div class="relative"><i class="fas fa-search absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
           <input type="text" id="auditSearch" onkeyup="filterAuditLog()" placeholder="بحث..." class="bg-dark-900 border border-dark-600 rounded-xl pr-10 pl-3 py-2 w-full text-sm text-gray-200 outline-none"></div>
+        <input type="date" id="auditDateFilter" onchange="filterAuditLog()" class="bg-dark-900 border border-dark-600 rounded-xl px-3 py-2 text-sm text-gray-200 outline-none">
       </div>
     </div>
     <div class="bg-dark-800 rounded-2xl border border-dark-700 overflow-hidden">
       ${!res.success || !res.data || res.data.length === 0 ? emptyState('لا توجد نشاطات مسجلة بعد', 'fa-clipboard-list') : `
       <div class="divide-y divide-dark-700" id="auditLogList">
         ${res.data.map(log => {
-          const a = actionLabels[log.action] || { text: log.action, icon: 'fa-circle', color: 'text-gray-400' };
+          const a = actionLabels[log.action] || { text: log.action, icon: 'fa-circle', color: 'text-gray-400', bg: 'bg-gray-500/10' };
           const t = tableLabels[log.table_name] || log.table_name;
           let details = '';
           try { const d = log.new_data ? JSON.parse(log.new_data) : (log.old_data ? JSON.parse(log.old_data) : {}); details = Object.values(d).filter(v => v && typeof v === 'string').slice(0, 2).join(' - '); } catch {}
-          return `<div class="audit-row flex items-start gap-3 p-4 hover:bg-dark-700/30 transition" data-table="${log.table_name}" data-action="${log.action}" data-text="${t} ${details}">
-            <div class="w-8 h-8 rounded-full bg-dark-900 flex items-center justify-center flex-shrink-0 mt-0.5"><i class="fas ${a.icon} ${a.color} text-xs"></i></div>
+          const hasData = log.old_data || log.new_data;
+          return `<div class="audit-row flex items-start gap-3 p-4 hover:bg-dark-700/30 transition cursor-pointer" data-table="${log.table_name}" data-action="${log.action}" data-text="${t} ${details}" data-date="${(log.created_at||'').split(' ')[0]}" onclick="${hasData ? `showAuditDetail(${JSON.stringify(log).replace(/'/g, "\\'").replace(/"/g, '&quot;')})` : ''}">
+            <div class="w-9 h-9 rounded-xl ${a.bg} flex items-center justify-center flex-shrink-0"><i class="fas ${a.icon} ${a.color} text-sm"></i></div>
             <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 flex-wrap"><span class="font-bold text-sm ${a.color}">${a.text}</span><span class="text-gray-300 text-sm">${t}</span>${log.record_id ? `<span class="text-gray-600 font-mono text-xs">#${log.record_id}</span>` : ''}</div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-bold text-sm ${a.color}">${a.text}</span>
+                <span class="text-gray-300 text-sm">${t}</span>
+                ${log.record_id ? `<span class="text-gray-600 font-mono text-xs">#${log.record_id}</span>` : ''}
+                ${hasData ? '<i class="fas fa-external-link-alt text-gray-600 text-[10px]" title="انقر لعرض التفاصيل"></i>' : ''}
+              </div>
               ${details ? `<p class="text-gray-500 text-xs mt-0.5 truncate">${details}</p>` : ''}
-              <div class="flex items-center gap-3 mt-1 text-xs text-gray-600"><span><i class="fas fa-clock ml-1"></i>${log.created_at}</span>${log.user_name ? `<span><i class="fas fa-user ml-1"></i>${log.user_name}</span>` : ''}</div>
+              <div class="flex items-center gap-3 mt-1 text-xs text-gray-600">
+                <span><i class="fas fa-clock ml-1"></i>${log.created_at}</span>
+                ${log.user_name ? `<span><i class="fas fa-user ml-1"></i>${log.user_name}</span>` : ''}
+              </div>
             </div>
           </div>`;
         }).join('')}
@@ -1693,17 +2144,68 @@ async function renderAuditLog(el) {
     </div>`;
 }
 
+function showAuditDetail(log) {
+  let oldData = null, newData = null;
+  try { oldData = log.old_data ? JSON.parse(log.old_data) : null; } catch {}
+  try { newData = log.new_data ? JSON.parse(log.new_data) : null; } catch {}
+
+  const formatData = (data, label, color) => {
+    if (!data) return '';
+    return `<div class="bg-dark-900 rounded-xl p-4">
+      <h4 class="text-${color} font-bold text-sm mb-3"><i class="fas fa-${label === 'قبل' ? 'arrow-circle-right' : 'arrow-circle-left'} ml-1"></i> ${label} التعديل</h4>
+      <div class="space-y-1.5">${Object.entries(data).map(([k, v]) => 
+        `<div class="flex justify-between text-xs"><span class="text-gray-500">${k}</span><span class="text-gray-300 font-mono">${typeof v === 'object' ? JSON.stringify(v) : v}</span></div>`
+      ).join('')}</div></div>`;
+  };
+
+  const diff = (oldData && newData) ? Object.keys(newData).filter(k => JSON.stringify(oldData[k]) !== JSON.stringify(newData[k])) : [];
+
+  showModal(`تفاصيل العملية #${log.id || ''}`, `
+    <div class="space-y-4">
+      <div class="grid grid-cols-3 gap-3 text-sm">
+        <div class="bg-dark-900 rounded-xl p-3 text-center"><span class="text-gray-500 text-xs block mb-1">العملية</span><span class="font-bold text-white">${log.action}</span></div>
+        <div class="bg-dark-900 rounded-xl p-3 text-center"><span class="text-gray-500 text-xs block mb-1">الجدول</span><span class="font-bold text-white">${log.table_name}</span></div>
+        <div class="bg-dark-900 rounded-xl p-3 text-center"><span class="text-gray-500 text-xs block mb-1">التاريخ</span><span class="text-white text-xs">${log.created_at}</span></div>
+      </div>
+      ${diff.length > 0 ? `<div class="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4">
+        <h4 class="text-yellow-400 font-bold text-sm mb-3"><i class="fas fa-exchange-alt ml-1"></i> التغييرات</h4>
+        <div class="space-y-2">${diff.map(k => `<div class="flex items-center gap-2 text-xs">
+          <span class="text-gray-400 min-w-[80px]">${k}:</span>
+          <span class="text-red-400 line-through font-mono">${oldData[k] ?? '-'}</span>
+          <i class="fas fa-arrow-left text-gray-600 text-[10px]"></i>
+          <span class="text-green-400 font-mono font-bold">${newData[k] ?? '-'}</span>
+        </div>`).join('')}</div></div>` : ''}
+      <div class="grid grid-cols-1 ${oldData && newData ? 'md:grid-cols-2' : ''} gap-4">
+        ${formatData(oldData, 'قبل', 'red-400')}
+        ${formatData(newData, 'بعد', 'green-400')}
+      </div>
+    </div>`,
+    `<button onclick="closeModal()" class="px-5 py-2.5 rounded-xl bg-primary-600 text-white text-sm">إغلاق</button>`, 'max-w-2xl');
+}
+
+function exportAuditCSV() {
+  const rows = document.querySelectorAll('.audit-row');
+  if (!rows.length) { showToast('لا توجد بيانات', 'warning'); return; }
+  let csv = '\uFEFF"العملية","الجدول","التاريخ","التفاصيل"\n';
+  rows.forEach(r => {
+    if (r.style.display === 'none') return;
+    csv += `"${r.dataset.action}","${r.dataset.table}","${r.dataset.date}","${(r.dataset.text||'').replace(/"/g,'""')}"\n`;
+  });
+  downloadCSV(csv, 'سجل_النشاطات');
+}
+
 function filterAuditLog() {
   const table = document.getElementById('auditTableFilter')?.value || '';
   const action = document.getElementById('auditActionFilter')?.value || '';
   const q = (document.getElementById('auditSearch')?.value || '').toLowerCase();
+  const dateFilter = document.getElementById('auditDateFilter')?.value || '';
   document.querySelectorAll('.audit-row').forEach(r => {
-    r.style.display = (!table || r.dataset.table === table) && (!action || r.dataset.action === action) && (!q || (r.dataset.text || '').toLowerCase().includes(q)) ? '' : 'none';
+    r.style.display = (!table || r.dataset.table === table) && (!action || r.dataset.action === action) && (!q || (r.dataset.text || '').toLowerCase().includes(q)) && (!dateFilter || (r.dataset.date || '') === dateFilter) ? '' : 'none';
   });
 }
 
 // ╔══════════════════════════════════════════════════╗
-// ║               EXPORT UTILITIES                    ║
+// ║               EXPORT UTILITIES (CSV + Excel)      ║
 // ╚══════════════════════════════════════════════════╝
 function exportTableCSV(tableId, filename) {
   const table = document.getElementById(tableId);
@@ -1715,12 +2217,132 @@ function exportTableCSV(tableId, filename) {
     cols.forEach(col => rowData.push('"' + col.textContent.trim().replace(/"/g, '""') + '"'));
     csv += rowData.join(',') + '\n';
   });
+  downloadCSV(csv, filename);
+}
+
+function exportTableExcel(tableId, filename, sheetName = 'Sheet1') {
+  const table = document.getElementById(tableId);
+  if (!table) { showToast('لا توجد بيانات للتصدير', 'warning'); return; }
+  if (typeof XLSX === 'undefined') { showToast('مكتبة Excel غير متوفرة', 'error'); return; }
+  try {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.table_to_sheet(table, { raw: false });
+    // Set RTL
+    if (!ws['!cols']) ws['!cols'] = [];
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    wb.Workbook = { Views: [{ RTL: true }] };
+    XLSX.writeFile(wb, `${filename}_${todayStr()}.xlsx`);
+    showToast('تم تصدير الملف بنجاح', 'success');
+  } catch (e) {
+    showToast('خطأ في التصدير: ' + e.message, 'error');
+  }
+}
+
+function exportDataExcel(data, headers, filename, sheetName = 'Sheet1') {
+  if (typeof XLSX === 'undefined') { showToast('مكتبة Excel غير متوفرة', 'error'); return; }
+  try {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(data, { header: headers });
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    wb.Workbook = { Views: [{ RTL: true }] };
+    XLSX.writeFile(wb, `${filename}_${todayStr()}.xlsx`);
+    showToast('تم تصدير الملف بنجاح', 'success');
+  } catch (e) {
+    showToast('خطأ في التصدير: ' + e.message, 'error');
+  }
+}
+
+function downloadCSV(csv, filename) {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = `${filename}_${todayStr()}.csv`;
   link.click();
   showToast('تم تصدير الملف بنجاح', 'success');
+}
+
+// Print with company header
+function printReport(title, contentHtml) {
+  const printWindow = window.open('', '_blank');
+  const user = getUser();
+  printWindow.document.write(`<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head><meta charset="UTF-8"><title>${title}</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  * { font-family: 'Tajawal', sans-serif; margin: 0; padding: 0; box-sizing: border-box; }
+  body { padding: 20mm; color: #333; font-size: 11pt; }
+  .header { text-align: center; border-bottom: 3px double #333; padding-bottom: 15px; margin-bottom: 20px; }
+  .header h1 { font-size: 16pt; margin-bottom: 3px; }
+  .header h2 { font-size: 14pt; color: #555; margin-bottom: 5px; }
+  .header .meta { font-size: 9pt; color: #777; }
+  table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+  th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: right; font-size: 10pt; }
+  th { background: #f0f0f0; font-weight: bold; }
+  .total-row { background: #e8f0fe; font-weight: bold; }
+  .signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 40px; margin-top: 60px; text-align: center; }
+  .signatures > div { padding-top: 8px; border-top: 1px solid #333; font-size: 10pt; }
+  .footer { text-align: center; margin-top: 30px; font-size: 8pt; color: #999; border-top: 1px solid #ddd; padding-top: 10px; }
+  @media print { @page { margin: 10mm; } }
+</style></head>
+<body>
+  <div class="header">
+    <h1>النظام المحاسبي</h1>
+    <h2>${title}</h2>
+    <p class="meta">التاريخ: ${new Date().toLocaleDateString('ar-IQ')} | المستخدم: ${user?.fullName || 'مدير'} | الوقت: ${new Date().toLocaleTimeString('ar-IQ')}</p>
+  </div>
+  ${contentHtml}
+  <div class="signatures"><div>المحاسب</div><div>المدقق</div><div>المدير المالي</div></div>
+  <div class="footer">النظام المحاسبي الحديث &copy; ${new Date().getFullYear()} - طُبع في ${new Date().toLocaleString('ar-IQ')}</div>
+  <script>setTimeout(()=>{window.print();window.close()},500)</script>
+</body></html>`);
+  printWindow.document.close();
+}
+
+// ╔══════════════════════════════════════════════════╗
+// ║                 PRINT HELPERS                      ║
+// ╚══════════════════════════════════════════════════╝
+function printTrialBalance() {
+  const table = document.getElementById('trialBalanceTable');
+  if (!table) { showToast('لا توجد بيانات', 'warning'); return; }
+  printReport('ميزان المراجعة', table.outerHTML);
+}
+
+function printIncomeStatement() {
+  const el = document.getElementById('incomeTable');
+  if (!el) return;
+  printReport('قائمة الدخل', el.innerHTML);
+}
+
+function printBalanceSheet() {
+  const el = document.getElementById('bsResult');
+  if (!el) { showToast('لا توجد بيانات', 'warning'); return; }
+  printReport('الميزانية العمومية', el.innerHTML);
+}
+
+function exportBalanceSheetCSV() {
+  const el = document.getElementById('bsResult');
+  if (!el) { showToast('لا توجد بيانات', 'warning'); return; }
+  let csv = '\uFEFF"القسم","الحساب","الرصيد"\n';
+  el.querySelectorAll('.flex.justify-between.py-2').forEach(row => {
+    const tds = row.querySelectorAll('span');
+    if (tds.length >= 2) csv += `"","${tds[0].textContent.trim()}","${tds[1].textContent.trim()}"\n`;
+  });
+  downloadCSV(csv, 'الميزانية_العمومية');
+}
+
+function exportBalanceSheetExcel() {
+  const el = document.getElementById('bsResult');
+  if (!el) { showToast('لا توجد بيانات', 'warning'); return; }
+  if (typeof XLSX === 'undefined') { showToast('مكتبة Excel غير متوفرة', 'error'); return; }
+  try {
+    const data = [];
+    el.querySelectorAll('.flex.justify-between.py-2').forEach(row => {
+      const tds = row.querySelectorAll('span');
+      if (tds.length >= 2) data.push({ 'الحساب': tds[0].textContent.trim(), 'الرصيد': tds[1].textContent.trim() });
+    });
+    exportDataExcel(data, ['الحساب', 'الرصيد'], 'الميزانية_العمومية', 'الميزانية');
+  } catch (e) { showToast('خطأ في التصدير', 'error'); }
 }
 
 // ╔══════════════════════════════════════════════════╗
@@ -1734,15 +2356,32 @@ function exportTableCSV(tableId, filename) {
     if (nameEl) nameEl.textContent = currentUser.fullName;
     const roles = { admin:'مدير النظام', manager:'مدير قسم', accountant:'محاسب', user:'مستخدم', viewer:'مشاهد' };
     if (roleEl) roleEl.textContent = roles[currentUser.role] || currentUser.role;
+    // Set avatar initial
+    const avatar = document.getElementById('userAvatar');
+    if (avatar && currentUser.fullName) {
+      avatar.innerHTML = `<span class="text-white font-bold text-sm">${currentUser.fullName.charAt(0)}</span>`;
+    }
   }
   const now = new Date();
   const dateEl = document.getElementById('currentDate'), fyEl = document.getElementById('fiscalYearBadge');
   if (dateEl) dateEl.textContent = now.toLocaleDateString('ar-IQ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   if (fyEl) fyEl.innerHTML = `<span class="badge badge-info">السنة المالية ${now.getFullYear()}</span>`;
+  
+  // Init notifications
+  updateNotifBadge();
+
   buildSidebar().then(() => {
     const path = window.location.pathname.replace('/app', '') || '/dashboard';
     loadPage(path); updateActiveLink(path); updateBreadcrumb(path);
   });
   window.addEventListener('popstate', () => { const path = window.location.pathname.replace('/app', '') || '/dashboard'; loadPage(path); updateActiveLink(path); updateBreadcrumb(path); });
-  document.addEventListener('click', (e) => { const menu = document.getElementById('userMenu'); if (menu && !menu.parentElement.contains(e.target)) menu.classList.add('hidden'); });
+  
+  // Close panels on outside click
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('userMenu');
+    if (menu && !menu.parentElement.contains(e.target)) menu.classList.add('hidden');
+    const notifPanel = document.getElementById('notifPanel');
+    const notifContainer = document.getElementById('notifContainer');
+    if (notifPanel && notifContainer && !notifContainer.contains(e.target)) notifPanel.classList.add('hidden');
+  });
 })();

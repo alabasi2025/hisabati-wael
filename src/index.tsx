@@ -9,20 +9,39 @@ import { reportRoutes } from './routes/reports'
 import { adminRoutes } from './routes/admin'
 import { dashboardRoutes } from './routes/dashboard'
 import { costCenterRoutes } from './routes/costcenters'
+import { authMiddleware, requireRole } from './middleware/auth'
 import { mainLayout } from './views/layout'
 import { loginPage } from './views/login'
 
 type Bindings = {
   DB: D1Database
 }
+type Variables = {
+  user: any
+  userId: number
+}
 
-const app = new Hono<{ Bindings: Bindings }>()
+const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
 app.use('*', logger())
 app.use('/api/*', cors())
 
-// ===== API Routes =====
+// ===== Public API Routes (no auth required) =====
 app.route('/api/auth', authRoutes)
+
+// ===== Protected API Routes (auth required) =====
+app.use('/api/accounts/*', authMiddleware)
+app.use('/api/journal/*', authMiddleware)
+app.use('/api/vouchers/*', authMiddleware)
+app.use('/api/reports/*', authMiddleware)
+app.use('/api/dashboard/*', authMiddleware)
+app.use('/api/cost-centers/*', authMiddleware)
+app.use('/api/admin/*', authMiddleware)
+
+// Admin routes require admin or manager role
+app.use('/api/admin/users/*', requireRole('admin'))
+app.use('/api/admin/fiscal-years/*', requireRole('admin', 'manager'))
+
 app.route('/api/accounts', accountRoutes)
 app.route('/api/journal', journalRoutes)
 app.route('/api/vouchers', voucherRoutes)
